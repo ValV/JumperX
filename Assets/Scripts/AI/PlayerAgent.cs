@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using Unity.MLAgents;
 using Unity.MLAgents.Sensors;
@@ -8,15 +6,8 @@ using static Platformer.Core.Simulation;
 using Platformer.Gameplay;
 using Platformer.Mechanics;
 using Platformer.Model;
-using Grpc.Core.Logging;
 using System;
-using UnityEngine.Tilemaps;
-using Unity.VisualScripting;
 using System.Linq;
-using Platformer.Core;
-using System.Diagnostics.Tracing;
-using UnityEngine.SceneManagement;
-using UnityEditor;
 
 public class PlayerAgent : Agent {
     // public interface ITrace {
@@ -511,29 +502,5 @@ public class PlayerAgent : Agent {
         // AddReward((Mathf.Min(Mathf.Abs(move.x), 0.3f) - 0.1f) * 0.01f +
         //           (float) (model.player.targetVelocity.y * 0.01));
         // AddReward(transform.position.y * 0.01f + transform.position.x * 0.001f);
-    }
-
-    private void OnCollisionEnter2D(Collision2D collision) {
-        // TODO: remove
-        // var obstacles = collision.gameObject.GetComponent<TilemapCollider2D>();
-        // if (obstacles != null) {
-        //     if ((numCollisions % maxCollisions) == 0) {
-        //         List<ContactPoint2D> contacts = new List<ContactPoint2D>();
-        //         // int numContacts = obstacles.GetContacts(contacts);
-        //         int numContacts = obstacles.GetContacts(contacts);
-        //         // string listContacts = "";
-        //         for (int i = 0; i < numContacts; i ++) {
-        //             // ContactPoint2D contact = contacts[i];
-        //             // listContacts += 
-        //             Debug.Log(string.Format("Contact: {0} <--> {1}, point = ({2}, {3}), normal = ({4}, {5})\n",
-        //                                           contacts[i].collider, contacts[i].otherCollider,
-        //                                           contacts[i].point.x, contacts[i].point.y,
-        //                                           contacts[i].normal.x, contacts[i].normal.y));
-        //         }
-        //         Debug.Log(string.Format("Collisions = {0}", numCollisions));
-        //         // Debug.Log(string.Format("Contacts:\n{0}", listContacts));
-        //     }
-        //     numCollisions ++;
-        // }
     }
 }
