@@ -1,0 +1,12 @@
+.vscode/
+Library/
+Logs/
+Recordings/
+Temp/
+UserSettings/
+build/
+obj/
+summaries/
+venv/
+*.csproj
+*.meta
