@@ -188,16 +188,6 @@ public class PlayerAgent : Agent {
             // };
             // Reset environment variables
             if (playerDead) {
-                // var sceneParameters = new LoadSceneParameters {
-                //     loadSceneMode = LoadSceneMode.Additive
-                // };
-                // SceneManager.UnloadSceneAsync(SceneManager.GetActiveScene());
-                // SceneManager.SetActiveScene(
-                // );
-                // SceneManager.MergeScenes(
-                //     SceneManager.LoadScene("SampleScene", sceneParameters),
-                //     SceneManager.GetActiveScene()
-                // );
                 for (int i = 0; i < tokens.Length; i++) {
                     tokens[i].gameObject.SetActive(true);
                     tokens[i].collected = false;
