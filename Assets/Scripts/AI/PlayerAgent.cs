@@ -10,55 +10,11 @@ using System;
 using System.Linq;
 
 public class PlayerAgent : Agent {
-    // public interface ITrace {
-    //     void push(float step);
-    //     float diff();
-    // }
-    protected class Trace {
-        float[] steps;
-        uint size = 5;
-        uint index = 0;
-        uint count = 0;
-
-        Vector2 positionLast;
-
-        public Trace() {
-            steps = new float[size];
-            positionLast = new Vector2(0.0f, 0.0f);
-        }
-
-        public void push(Vector2 position) {
-            // Euclidean distance
-            // steps[index] = Mathf.Sqrt(Mathf.Pow(position.x - positionLast.x, 2) +
-            //                           Mathf.Pow(position.y - positionLast.y, 2));  // >= 0
-            // x-axis distance
-            steps[index] = Mathf.Abs(position.x - positionLast.x);
-            positionLast = position;
-            index %= size;
-            count = Math.Min(count + 1, size);
-
-        }
-
-        public float length() {
-            if (count > 0) {
-                // return Mathf.Abs(steps[(index + count) % size] - steps[index]);
-                return Mathf.Abs(steps.Sum());
-            } else {
-                return 0.0f;
-            }
-        }
-    }
-
     public float TokenRewardMultiplier = 1.0f;
     public float EnemyRewardMultiplier = 1.0f;
     // [SerializeField] readonly PlayerController player;
     readonly PlatformerModel model = GetModel<PlatformerModel>();
     Rigidbody2D body;
-
-    // private Trace trace;
-    // float traceEps = 0.0001f;  // 1e-2 in training mode, 1e-4 in heuristic mode
-    float tracePenalty = 0.0f;
-    readonly float tracePenaltyAdd = -1e-5f;  // -0.0025f;
 
     bool jump;
     bool startJump = false;
@@ -132,8 +88,6 @@ public class PlayerAgent : Agent {
         // filterContacts.useOutsideNormalAngle = true;
         // filterContacts.SetDepth(0.95f, 1.05f);
         body = model.player.GetComponent<Rigidbody2D>();
-        // trace = new Trace();
-        // trace.push(new Vector2(10.0f, 10.0f));
         penaltyTick = penaltyTemporal / MaxStep;
         penaltyEpisode = 0.0f;
         rewardEpisode = 0.0f;
@@ -318,7 +272,6 @@ public class PlayerAgent : Agent {
     public override void OnEpisodeBegin() {
         // base.OnEpisodeBegin();
         // Reset variables as at the beginning of an episode
-        // tracePenalty = 0.0f;
         // numCollisions = 0.0f;
         if (penaltyTotal != 0) {
             Debug.Log(string.Format("Stop episode: rewards = {0}, penalties = {1}, " +
@@ -438,28 +391,6 @@ public class PlayerAgent : Agent {
         // Debug.Log(string.Format("Player target velocity x = {0}, y = {1}",
         //                         model.player.targetVelocity.x, model.player.targetVelocity.y));
 
-        // Add position to trace
-        // trace.push(transform.position);
-
-        // Punish agent if it does not move (based on trace size for the last N steps)
-        // if (trace.length() < traceEps && model.player.controlEnabled) {
-        //     tracePenalty += tracePenaltyAdd;
-        //     Debug.Log(string.Format("Trace length = {0} < trace eps = {1}", trace.length(), traceEps));
-        //     if (tracePenalty - penaltyTemporal < 0) {
-        //         // Abs(tracePenalty) > Abs(penaltyTemporal)
-        //         Debug.Log("You're stuck!");
-        //         StopEpisode(0.0f);
-        //         // --> EndEpisode
-        //         Schedule<PlayerSpawn>(0);
-        //     } else {
-        //         Debug.Log(string.Format("Trace penalty = {0}", tracePenalty));
-        //         AddReward(tracePenalty);
-        //         rewardEpisode += tracePenalty;
-        //     }
-        // } else {
-        //     tracePenalty = Mathf.Min(tracePenalty - tracePenaltyAdd, 0.0f);
-        // }
-
         // Punish agent if it runs into an obstacle
         if (body != null) {
             numContacts = body.GetContacts(filterContacts, contacts);
@@ -475,7 +406,6 @@ public class PlayerAgent : Agent {
                     numCollisions = Math.Max(numCollisions - 1, 0);  // >= 0
                 }
             }
-            // tracePenalty = numCollisions * tracePenaltyAdd;
             if (numCollisions >= maxCollisions && model.player.controlEnabled) {
                 Debug.Log("You're stuck!");
                 numCollisions = 0;
@@ -484,8 +414,6 @@ public class PlayerAgent : Agent {
                 playerDead = true;
                 Schedule<PlayerSpawn>(0);
             } else {
-                // AddReward(tracePenalty);
-                // rewardEpisode += tracePenalty;
             }
             // if (numContacts > 6) {
             //     // Debug.Log(string.Format("Number of contacts = {0}", numContacts));
