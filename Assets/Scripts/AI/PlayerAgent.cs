@@ -10,6 +10,21 @@ using System;
 using System.Linq;
 
 public class PlayerAgent : Agent {
+    enum Reason {
+        TIMEOUT,
+        KILLED,
+        FALLEN,
+        STUCK,
+        WON
+    };
+    Reason endReason = Reason.TIMEOUT;
+    readonly string[] endReasonNames = {
+        "timeout",
+        "killed",
+        "fallen",
+        "stuck",
+        "won"
+    };
     public float TokenRewardMultiplier = 1.0f;
     public float EnemyRewardMultiplier = 1.0f;
     // [SerializeField] readonly PlayerController player;
@@ -32,7 +47,7 @@ public class PlayerAgent : Agent {
     float rewardEpisode = 0.0f;
     float rewardTokenCollect = 1.0e-5f;
     float rewardEnemyKill = 1.0e-5f;
-    float returnEpisode = 0.0f;
+    // float returnEpisode = 0.0f;
     float discountPositional = 0.0f;
 
     int numCollisions = 0;
@@ -45,6 +60,8 @@ public class PlayerAgent : Agent {
 
     float targetX = 0.0f;
     // float targetXReward = 0.0f;
+    bool episodeActive = true;
+
     GameObject[] enemies;  // = new List<EnemyController>;
     Vector3[] enemyPositions;
     Vector2[] enemyVelocities;
@@ -52,6 +69,12 @@ public class PlayerAgent : Agent {
     // TokenInstance[] tokensSource => FindObjectOfType<TokenController>().tokens;
     TokenController tokenController; // => model.FindObjectsOfType<TokenController>();
     GameController game => FindObjectOfType<GameController>();
+
+    // internal int _CompletedEpisodes = 0;
+    internal int _StepCount = 0;
+    // internal int _EpisodeBeginCalled = 0;
+    // internal int _StopEpisodeCalled = 0;
+    // internal int _PlayerDeadCalled = 0;
 
     void Start() {
         enemies = FindObjectsOfType<EnemyController>().ToList().ConvertAll(item => item.gameObject).ToArray();
@@ -102,6 +125,7 @@ public class PlayerAgent : Agent {
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
             Debug.Log(string.Format("Ta-da!!! Game completed in {0} steps (+1.0)", StepCount));
             // Game completed successfully
+            endReason = Reason.WON;
             StopEpisode(1.0f);
             // --> EndEpisode
             // EditorApplication.ExitPlaymode();
@@ -141,18 +165,28 @@ public class PlayerAgent : Agent {
 
         PlayerDeath.OnExecute += PlayerDeath_OnExecute;
         void PlayerDeath_OnExecute(PlayerDeath ev) {
-            // There are many faces of Death, but you face only one
-            if (facedEnemy & !playerDead) {
-                // Debug.Log("You've been pwned (-1.0)!");
-                facedEnemy = false;
-                playerDead = true;
-            } else if (!playerDead) {
-                // Debug.Log("You've died (-1.0)!");
-                playerDead = true;
+            /// This function in practice is being called multiple time before respawn
+            /// so guard episodes with 'episodeActive' variable which is reset on true respawn
+            // _PlayerDeadCalled += 1;
+            // There are many faces of Death, but you must face the only one
+            if (!playerDead) {
+                if (facedEnemy) {
+                    // Debug.Log("You've been pwned (-1.0)!");
+                    facedEnemy = false;
+                    playerDead = true;
+                    endReason = Reason.KILLED;
+                } else {
+                    // Debug.Log("You've died (-1.0)!");
+                    playerDead = true;
+                    endReason = Reason.FALLEN;
+                }
+            } else {
+                // Now you're successfully dead
+                if (episodeActive) {
+                    StopEpisode(-1.0f);
+                }
+                // --> EndEpisode
             }
-            // Now you're successfully dead
-            StopEpisode(-1.0f);
-            // --> EndEpisode
         }
 
         EnablePlayerInput.OnExecute += EnablePlayerInput_OnExecute;
@@ -219,13 +253,15 @@ public class PlayerAgent : Agent {
                 }
             }
             playerDead = false;
+            episodeActive = true;
             numCollisions = 0;
         }
     }
 
     void StopEpisode(float reward) {
+        // _StopEpisodeCalled += 1;
         // Prepare and terminate episode
-        returnEpisode = rewardEpisode + penaltyEpisode;
+        // returnEpisode = rewardEpisode + penaltyEpisode;
         // AddReward(reward);
         // rewardEpisode += reward;
         // Discounted penalty - less penalty if agent is closer to Victory, more otherwise
@@ -241,9 +277,10 @@ public class PlayerAgent : Agent {
         // reward = Mathf.Clamp(1.0f - (targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
         // AddReward(reward);
         // rewardEpisode += reward;
-        Debug.Log(string.Format("Stop episode: episodes played = {0}, step count = {1}",
-                                CompletedEpisodes, StepCount));
+        // _CompletedEpisodes = CompletedEpisodes;
+        // _StepCount = StepCount;
         // Debug.Log(string.Format("Stop episode: discount positional = {0}", discountPositional));
+        episodeActive = false;
         EndEpisode();
     }
 
@@ -257,31 +294,44 @@ public class PlayerAgent : Agent {
         AddReward(penaltyTick * discountPositional);
         penaltyEpisode += penaltyTick * discountPositional;
         // rewardEpisode += penalty;
+        _StepCount = StepCount;
     }
 
     public override void OnEpisodeBegin() {
+        // _EpisodeBeginCalled += 1;
         // base.OnEpisodeBegin();
         // Reset variables as at the beginning of an episode
         // numCollisions = 0.0f;
-        if (penaltyTotal != 0) {
-            Debug.Log(string.Format("Stop episode: rewards = {0}, penalties = {1}, " +
-                                    "discount positional = {2}, penalty positional = {3}, " +
-                                    "penalty residual = {4}",
-                                    rewardEpisode, penaltyEpisode, discountPositional, penaltyTotal,
-                                    penaltyTotal - penaltyEpisode));
+        // Debug.Log($"BeginEpisode #{_EpisodeBeginCalled}, StopEpisode #{_StopEpisodeCalled}, PlayerDeath #{_PlayerDeadCalled}");
+        // Debug.Log(string.Format("Stop episode: episodes played = {0}, step count = {1}",
+        //                         CompletedEpisodes, _StepCount));
+        string report = (
+                $"Episode = {CompletedEpisodes}, steps = {_StepCount} ({endReasonNames[(int) endReason]})"
+                + $", rewards = {rewardEpisode}, penalties = {penaltyEpisode}"
+                + $", discount positional = {discountPositional}"
+        );
+        // if (penaltyTotal != 0) {
+        if (endReason != Reason.TIMEOUT) {
+            report += (
+                // $"Episode = {CompletedEpisodes}, steps = {_StepCount}"
+                // + $", rewards = {rewardEpisode}, penalties = {penaltyEpisode}"
+                // + $", discount positional = {discountPositional}"
+                $", penalty positional = {penaltyTotal}"
+                + $", penalty residual = {penaltyTotal - penaltyEpisode}"
+            );
         } else {
-            Debug.Log(string.Format("Stop episode (timeout): rewards = {0}, penalties = {1}, " +
-                                    "discount positional = {2}",
-                                    rewardEpisode, penaltyEpisode, discountPositional));
+            // report += ;
         }
+        Debug.Log(report);
         penaltyEpisode = 0.0f;  // reset timely penalty
         penaltyTotal = 0.0f;
         rewardEpisode = 0.0f;
-        returnEpisode = 0.0f;
+        // returnEpisode = 0.0f;
         // if (!playerDead) {
         //     // Respawn if an episode ends with timeout
         //     // Schedule<PlayerSpawn>(0);
         // }
+        endReason = Reason.TIMEOUT;
     }
 
     public override void CollectObservations(VectorSensor sensor) {
@@ -397,11 +447,12 @@ public class PlayerAgent : Agent {
                 }
             }
             if (numCollisions >= maxCollisions && model.player.controlEnabled) {
-                Debug.Log("You're stuck!");
+                // Debug.Log("You're stuck!");
+                endReason = Reason.STUCK;
                 numCollisions = 0;
-                StopEpisode(-1.0f);
                 model.player.controlEnabled = false;
                 playerDead = true;
+                StopEpisode(-1.0f);
                 Schedule<PlayerSpawn>(0);
             } else {
             }
