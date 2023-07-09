@@ -7,6 +7,7 @@ using Platformer.Gameplay;
 using Platformer.Mechanics;
 using Platformer.Model;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 public class PlayerAgent : Agent {
@@ -27,6 +28,9 @@ public class PlayerAgent : Agent {
     };
     public float TokenRewardMultiplier = 1.0f;
     public float EnemyRewardMultiplier = 1.0f;
+    public float WinRewardMultiplier = 1.0f;
+    public bool CurriculumEnabled = false;
+    public int CurriculumWinThreshold = 10;
     // [SerializeField] readonly PlayerController player;
     readonly PlatformerModel model = GetModel<PlatformerModel>();
     Rigidbody2D body;
@@ -40,7 +44,7 @@ public class PlayerAgent : Agent {
     bool facedEnemy = false;
     bool playerDead = false;
 
-    float penaltyTick;
+    float penaltyTick = 0.0f;
     const float penaltyTemporal = -1.0f;
     float penaltyEpisode;
     float penaltyTotal = 0.0f;
@@ -75,8 +79,24 @@ public class PlayerAgent : Agent {
     // internal int _EpisodeBeginCalled = 0;
     // internal int _StopEpisodeCalled = 0;
     // internal int _PlayerDeadCalled = 0;
+    internal List<GameObject> curriculumSpawnPoints;
+    internal int curriculumWinCount = 0;
+    internal int curriculumSpawnIndex = 0;
+
 
     void Start() {
+        // GameObject[] spwnpts = GameObject.FindGameObjectsWithTag("Respawn");
+        // Debug.Log($"DEBUG: spawn points (array) = {spwnpts.Length}");
+        curriculumSpawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
+        curriculumSpawnPoints.Sort(delegate(GameObject a, GameObject b) {
+            return a.name.CompareTo(b.name);
+        });
+        if (CurriculumEnabled) {
+            curriculumSpawnIndex = curriculumSpawnPoints.Count - 1;
+        }
+        // Debug.Log($"DEBUG: spawn index = {curriculumSpawnIndex}");
+        model.spawnPoint = curriculumSpawnPoints[curriculumSpawnIndex].transform;
+        model.player.Teleport(model.spawnPoint.transform.position);
         enemies = FindObjectsOfType<EnemyController>().ToList().ConvertAll(item => item.gameObject).ToArray();
         enemyPositions = new Vector3[enemies.Length];
         enemyVelocities = new Vector2[enemies.Length];
@@ -123,12 +143,22 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
-            Debug.Log(string.Format("Ta-da!!! Game completed in {0} steps (+1.0)", StepCount));
+            // Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{WinRewardMultiplier})"));
             // Game completed successfully
             endReason = Reason.WON;
+            // Respawn at one of the spawn points
+            curriculumWinCount ++;
+            if (CurriculumEnabled) {
+                if (curriculumWinCount >= CurriculumWinThreshold) {
+                    curriculumWinCount = 0;
+                    curriculumSpawnIndex --;
+                    curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
+                }
+                model.spawnPoint = curriculumSpawnPoints[curriculumSpawnIndex].transform;
+            }
             StopEpisode(1.0f);
             // --> EndEpisode
-            // EditorApplication.ExitPlaymode();
+            Schedule<PlayerSpawn>(2);
         }
 
         PlayerEnteredDeathZone.OnExecute += PlayerEnteredDeathZone_OnExecute;
@@ -208,6 +238,11 @@ public class PlayerAgent : Agent {
 
         PlayerSpawn.OnExecute += PlayerSpawn_OnExecute;
         void PlayerSpawn_OnExecute(PlayerSpawn ev) {
+            // Debug.Log($"Spawn points = {curriculumSpawnPoints.Count}, spawn index = {curriculumSpawnIndex}");
+            // foreach (var parameter in model.player.animator.parameters.Where(parameter => parameter.type == AnimatorControllerParameterType.Trigger)) {
+            //     Debug.Log(parameter.name);
+            // }
+            // model.player.animator.SetBool("dead", false);
             // if (StepCount > 0) {
             //     // Here was the end of episode (not really smart)
             // }
@@ -221,7 +256,8 @@ public class PlayerAgent : Agent {
             //     }
             // };
             // Reset environment variables
-            if (playerDead) {
+            if (true || playerDead) {
+                // Reset tokens
                 for (int i = 0; i < tokens.Length; i++) {
                     tokens[i].gameObject.SetActive(true);
                     tokens[i].collected = false;
@@ -235,6 +271,7 @@ public class PlayerAgent : Agent {
                     // tokensSource[i] = tokens[i];
                 }
 
+                // Reset enemies
                 for (int i =0; i < enemies.Length; i ++) {
                     var enemy = enemies[i].GetComponent<EnemyController>();
                     enemy.GetComponent<Health>()?.Increment();
@@ -272,7 +309,8 @@ public class PlayerAgent : Agent {
             //
             AddReward(penaltyTotal - penaltyEpisode);  // dead: add residual penalty down to -1
         } else {
-            AddReward(1.0f - rewardEpisode);  // win: add reward up to +1
+            AddReward(1.0f * WinRewardMultiplier);  // - rewardEpisode);  // win: add reward up to +1
+            rewardEpisode += 1.0f * WinRewardMultiplier;
         }
         // reward = Mathf.Clamp(1.0f - (targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
         // AddReward(reward);
