@@ -8,85 +8,107 @@ using Platformer.Mechanics;
 using Platformer.Model;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 public class PlayerAgent : Agent {
-    enum Reason {
+    // Config and public fields
+    [Serializable]
+    class Config {
+        public uint DebugLevel;
+    }
+    public float TokenGetReward = 1.0f;
+    public float EnemyKillReward = 1.0f;
+    public float WinReward = 1.0f;
+    public float TickPenalty = 1.0f;  // penalty for whole episode (max steps)
+    public int MaxCollisions = 250;  // maximum number of collisions with obstacles to end episode
+    public bool CurriculumEnabled = false;
+    public int CurriculumWins = 10;
+    public int CurriculumFailures = 10;
+    public uint DebugLevel = 0;
+
+    internal enum Reason {
         TIMEOUT,
         KILLED,
         FALLEN,
         STUCK,
         WON
     };
-    Reason endReason = Reason.TIMEOUT;
-    readonly string[] endReasonNames = {
+    internal Reason endReason = Reason.TIMEOUT;
+    internal readonly string[] endReasonNames = {
         "timeout",
         "killed",
         "fallen",
         "stuck",
         "won"
     };
-    public float TokenRewardMultiplier = 1.0f;
-    public float EnemyRewardMultiplier = 1.0f;
-    public float WinRewardMultiplier = 1.0f;
-    public bool CurriculumEnabled = false;
-    public int CurriculumWinThreshold = 10;
     // [SerializeField] readonly PlayerController player;
-    readonly PlatformerModel model = GetModel<PlatformerModel>();
-    Rigidbody2D body;
+    internal readonly PlatformerModel model = GetModel<PlatformerModel>();
+    internal Rigidbody2D body;
 
-    bool jump;
-    bool startJump = false;
-    bool stopJump;
-    Vector2 move;
+    // Move and jump states
+    internal bool jump;
+    internal bool startJump = false;
+    internal bool stopJump;
+    internal Vector2 move;
 
-    bool facedEnemy = false;
-    bool playerDead = false;
+    internal bool facedEnemy = false;
+    internal bool playerDead = false;
+    internal bool episodeActive = true;  // episode lock (avoid multiple episode ends per death)
+    internal float targetX = 0.0f;  // victory point X-coordinate (calculated)
+    internal int stepCount = 0;  // current episode steps (mirror ML Agents episode steps)
 
-    float penaltyTick = 0.0f;
-    const float penaltyTemporal = -1.0f;
-    float penaltyEpisode;
-    float penaltyTotal = 0.0f;
-    float rewardEpisode = 0.0f;
-    float rewardTokenCollect = 1.0e-5f;
-    float rewardEnemyKill = 1.0e-5f;
-    float discountPositional = 0.0f;
 
-    int numCollisions = 0;
-    readonly int maxCollisions = 250;
+    internal float penaltyTick = 0.0f;  // penalty per update tick (calculated)
+    internal float penaltyEpisode = 0.0f;  // residual penalty (calculated)
+    internal float penaltyTotal = 0.0f;  // total accumulated penalty per episode (calculated)
+    internal float rewardEpisode = 0.0f;  // total accumulated reward per episode (calculated)
+    internal float rewardTokenCollect = 1.0e-5f;  // reward per collected token (calculated)
+    internal float rewardEnemyKill = 1.0e-5f;  // reward per killed enemy (calculated)
+    internal float discountPositional = 0.0f;  // positional coefficient (calculated on Player's X position)
 
+    // Collision detection
+    internal int numCollisions = 0;  // accumulated number of collisions (calculated)
     // List<ContactPoint2D> contacts;
-    ContactPoint2D[] contacts;
-    int numContacts = 0;
-    ContactFilter2D filterContacts;
+    internal ContactPoint2D[] contacts;  // contact points for collision detection
+    internal int numContacts = 0;  // current collision number of contacts
+    internal ContactFilter2D filterContacts;  // collision contacts filter (horizontal/vertical)
 
-    float targetX = 0.0f;
-    bool episodeActive = true;
-
-    GameObject[] enemies;
-    Vector3[] enemyPositions;
-    Vector2[] enemyVelocities;
-    TokenInstance[] tokens;
+    // Enemies
+    internal GameObject[] enemies;  // list of enemies (initialized on start)
+    internal Vector3[] enemyPositions;  // list of enemies positions (initialized on start)
+    internal Vector2[] enemyVelocities;  // list of enemies velocities (initialized on start)
+    // Tokens
+    internal TokenInstance[] tokens;  // list of tokens (initialized on start)
     // TokenInstance[] tokensSource => FindObjectOfType<TokenController>().tokens;
-    TokenController tokenController; // => model.FindObjectsOfType<TokenController>();
-    GameController game => FindObjectOfType<GameController>();
+    internal TokenController tokenController; // => model.FindObjectsOfType<TokenController>();
+    internal GameController Game => FindObjectOfType<GameController>();
 
-    internal int _StepCount = 0;
-    internal List<GameObject> curriculumSpawnPoints;
-    internal int curriculumWinCount = 0;
-    internal int curriculumSpawnIndex = 0;
+    // Curriculum
+    internal List<GameObject> curriculumSpawnPoints;  // list of spawn points (initialized on start)
+    internal int curriculumWinCount = 0;  // episode win counter for curriculum (calculated)
+    internal int curriculumFailCount = 0;  // episode fail counter for curriculum (calculated)
+    internal int curriculumSpawnIndex = 0;  // current spawn point index (calculated)
+    internal int curriculumSpawnDepth = 1;
 
+    // Misc
+    internal static System.Random random;
 
     void Start() {
+        random = new System.Random();
         curriculumSpawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
         curriculumSpawnPoints.Sort(delegate(GameObject a, GameObject b) {
             return a.name.CompareTo(b.name);
         });
         if (CurriculumEnabled) {
-            curriculumSpawnIndex = curriculumSpawnPoints.Count - 1;
+            curriculumSpawnDepth = curriculumSpawnPoints.Count;
+            curriculumSpawnIndex = curriculumSpawnDepth - 1;
         }
         // Debug.Log($"DEBUG: spawn index = {curriculumSpawnIndex}");
-        model.spawnPoint = curriculumSpawnPoints[curriculumSpawnIndex].transform;
+        Debug.Log($"Working directory = {Directory.GetCurrentDirectory()}");
+        model.spawnPoint = curriculumSpawnPoints[
+            random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+        ].transform;
         model.player.Teleport(model.spawnPoint.transform.position);
         enemies = FindObjectsOfType<EnemyController>().ToList().ConvertAll(item => item.gameObject).ToArray();
         enemyPositions = new Vector3[enemies.Length];
@@ -102,7 +124,7 @@ public class PlayerAgent : Agent {
         //     tokens[i] = tokensSource[i];
         // }
         // tokens = FindObjectsOfType<TokenInstance>();
-        tokenController = game.GetComponent<TokenController>();
+        tokenController = Game.GetComponent<TokenController>();
         tokens = new TokenInstance[tokenController.tokens.Length];
         for (int i = 0; i < tokens.Length; i++) {
             tokens[i] = tokenController.tokens[i];
@@ -112,8 +134,8 @@ public class PlayerAgent : Agent {
         // Debug.Log(string.Format("Token weight = {0}", weightToken));
         float weightEnemy = 1.0f - weightToken;
         // Debug.Log(string.Format("Enemy weight = {0}", weightEnemy));
-        rewardTokenCollect = 1.0f / tokens.Length * weightToken * TokenRewardMultiplier;
-        rewardEnemyKill = 1.0f / enemies.Length * weightEnemy * EnemyRewardMultiplier;
+        rewardTokenCollect = 1.0f / tokens.Length * weightToken * TokenGetReward;
+        rewardEnemyKill = 1.0f / enemies.Length * weightEnemy * EnemyKillReward;
         // contacts = new List<ContactPoint2D>();
         contacts = new ContactPoint2D[8];
         filterContacts = new ContactFilter2D();
@@ -122,9 +144,9 @@ public class PlayerAgent : Agent {
         // filterContacts.useOutsideNormalAngle = true;
         // filterContacts.SetDepth(0.95f, 1.05f);
         body = model.player.GetComponent<Rigidbody2D>();
-        penaltyTick = penaltyTemporal / MaxStep;
-        penaltyEpisode = 0.0f;
-        rewardEpisode = 0.0f;
+        penaltyTick = -TickPenalty / MaxStep;
+        // penaltyEpisode = 0.0f;
+        // rewardEpisode = 0.0f;
 
         targetX = FindFirstObjectByType<VictoryZone>().transform.position.x;
         float power = Mathf.Pow(10, Mathf.Round(Mathf.Log10(targetX) - 1.0f));
@@ -140,12 +162,15 @@ public class PlayerAgent : Agent {
             // Respawn at one of the spawn points
             curriculumWinCount ++;
             if (CurriculumEnabled) {
-                if (curriculumWinCount >= CurriculumWinThreshold) {
+                // Increase available spawn points if the agent is doing well
+                if (curriculumWinCount >= CurriculumWins) {
                     curriculumWinCount = 0;
                     curriculumSpawnIndex --;
                     curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
                 }
-                model.spawnPoint = curriculumSpawnPoints[curriculumSpawnIndex].transform;
+                model.spawnPoint = curriculumSpawnPoints[
+                    random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+                ].transform;
             }
             StopEpisode(1.0f);
             // --> EndEpisode
@@ -263,8 +288,8 @@ public class PlayerAgent : Agent {
             //
             AddReward(penaltyTotal - penaltyEpisode);  // dead: add residual penalty down to -1
         } else {
-            AddReward(1.0f * WinRewardMultiplier);  // - rewardEpisode);  // win: add reward up to +1
-            rewardEpisode += 1.0f * WinRewardMultiplier;
+            AddReward(1.0f * WinReward);  // - rewardEpisode);  // win: add reward up to +1
+            rewardEpisode += 1.0f * WinReward;
         }
         // reward = Mathf.Clamp(1.0f - (targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
         // AddReward(reward);
@@ -285,7 +310,7 @@ public class PlayerAgent : Agent {
         AddReward(penaltyTick * discountPositional);
         penaltyEpisode += penaltyTick * discountPositional;
         // rewardEpisode += penalty;
-        _StepCount = StepCount;
+        stepCount = StepCount;
     }
 
     public override void OnEpisodeBegin() {
@@ -295,7 +320,7 @@ public class PlayerAgent : Agent {
         // Debug.Log(string.Format("Stop episode: episodes played = {0}, step count = {1}",
         //                         CompletedEpisodes, _StepCount));
         string report = (
-                $"Episode = {CompletedEpisodes}, steps = {_StepCount} ({endReasonNames[(int) endReason]})"
+                $"Episode = {CompletedEpisodes}, steps = {stepCount} ({endReasonNames[(int) endReason]})"
                 + $", rewards = {rewardEpisode}, penalties = {penaltyEpisode}"
                 + $", discount positional = {discountPositional}"
         );
@@ -308,10 +333,19 @@ public class PlayerAgent : Agent {
                 $", penalty positional = {penaltyTotal}"
                 + $", penalty residual = {penaltyTotal - penaltyEpisode}"
             );
-        } else {
-            // report += ;
         }
         Debug.Log(report);
+        if (CurriculumEnabled && endReason != Reason.WON) {
+            // Decrease available spawn points if the agent doing bad
+            if (curriculumFailCount >= CurriculumWins * CurriculumFailures) {
+                curriculumFailCount = 0;
+                curriculumSpawnIndex ++;
+                curriculumSpawnIndex = Math.Min(curriculumSpawnIndex, curriculumSpawnDepth - 1);
+            }
+            model.spawnPoint = curriculumSpawnPoints[
+                random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+            ].transform;
+        }
         penaltyEpisode = 0.0f;  // reset timely penalty
         penaltyTotal = 0.0f;
         rewardEpisode = 0.0f;
@@ -430,7 +464,7 @@ public class PlayerAgent : Agent {
                     numCollisions = Math.Max(numCollisions - 1, 0);  // >= 0
                 }
             }
-            if (numCollisions >= maxCollisions && model.player.controlEnabled) {
+            if (numCollisions >= MaxCollisions && model.player.controlEnabled) {
                 // Debug.Log("You're stuck!");
                 endReason = Reason.STUCK;
                 numCollisions = 0;
