@@ -117,9 +117,9 @@ public class PlayerAgent : Agent {
     private Config config = new Config();
 
     internal void LoadConfig(string fileName = "config.json") {
+        var cfg = "";
         if (File.Exists(fileName)) {
-            var cfg = File.ReadAllText(fileName, Encoding.UTF8);
-            Debug.Log($"DEBUG: read config = {cfg}\n");
+            cfg = File.ReadAllText(fileName, Encoding.UTF8);
             JsonUtility.FromJsonOverwrite(cfg, config);
         }
         RewardGetToken = config.RewardGetToken;
@@ -134,6 +134,8 @@ public class PlayerAgent : Agent {
         CurriculumWins = config.CurriculumWins;
         CurriculumFailures = config.CurriculumFailures;
         DebugLevel = config.DebugLevel;
+        if (DebugLevel > 0 && cfg.Length > 2)
+            Debug.Log($"Read config = {cfg}\n");
     }
 
     internal void SaveConfig(string fileName = "config.json") {
@@ -150,7 +152,8 @@ public class PlayerAgent : Agent {
         config.CurriculumFailures = CurriculumFailures;
         config.DebugLevel = DebugLevel;
         var cfg = JsonUtility.ToJson(config);
-        Debug.Log($"DEBUG: config to save = {cfg}\n");
+        if (DebugLevel > 0)
+            Debug.Log($"Save config = {cfg}\n");
         File.WriteAllText(fileName, cfg, Encoding.UTF8);
     }
 
@@ -165,8 +168,6 @@ public class PlayerAgent : Agent {
             curriculumSpawnDepth = curriculumSpawnPoints.Count;
             curriculumSpawnIndex = curriculumSpawnDepth - 1;
         }
-        // Debug.Log($"DEBUG: spawn index = {curriculumSpawnIndex}");
-        Debug.Log($"Working directory = {Directory.GetCurrentDirectory()}");
         model.spawnPoint = curriculumSpawnPoints[
             random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
         ].transform;
@@ -178,7 +179,6 @@ public class PlayerAgent : Agent {
             enemyPositions[i] = enemies[i].transform.position + Vector3.zero;
             enemyVelocities[i] = enemies[i].GetComponent<EnemyController>().control.velocity + Vector2.zero;
         }
-        // Debug.Log(string.Format("Number of enemies = {0}", enemies.Length));
         // var tokens_source = FindObjectOfType<TokenController>().tokens;
         // tokens = new TokenInstance[tokensSource.Length];
         // for (int i = 0; i < tokensSource.Length; i ++) {
@@ -190,11 +190,8 @@ public class PlayerAgent : Agent {
         for (int i = 0; i < tokens.Length; i++) {
             tokens[i] = tokenController.tokens[i];
         }
-        // Debug.Log($"Num tokens = {tokens.Length}, num enemies = {enemies.Length}");
         float weightToken = 1.0f * tokens.Length / (tokens.Length + enemies.Length);
-        // Debug.Log(string.Format("Token weight = {0}", weightToken));
         float weightEnemy = 1.0f - weightToken;
-        // Debug.Log(string.Format("Enemy weight = {0}", weightEnemy));
         rewardTokenCollect = RewardGetToken * weightToken / tokens.Length;
         rewardEnemyKill = RewardKillEnemy * weightEnemy / enemies.Length;
         // contacts = new List<ContactPoint2D>();
@@ -213,11 +210,19 @@ public class PlayerAgent : Agent {
         float power = Mathf.Pow(10, Mathf.Round(Mathf.Log10(targetX) - 1.0f));
         targetX = Mathf.Round(targetX / power) * power;
 
-        // Debug.Log(string.Format("Victory zone target --> {0}", targetX));
+        if (DebugLevel > 1) {
+            Debug.Log($"Spawn index = {curriculumSpawnIndex}");
+            Debug.Log($"Working directory = {Directory.GetCurrentDirectory()}");
+            Debug.Log($"Num tokens = {tokens.Length}, num enemies = {enemies.Length}");
+            Debug.Log($"Token weight = {weightToken}");
+            Debug.Log($"Enemy weight = {weightEnemy}");
+            Debug.Log($"Victory zone target = {targetX}");
+        }
 
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
-            // Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{WinRewardMultiplier})"));
+            if (DebugLevel > 1)
+                Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{RewardWin})"));
             // Game completed successfully
             endReason = Reason.WON;
             // Respawn at one of the spawn points
@@ -240,7 +245,8 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredDeathZone.OnExecute += PlayerEnteredDeathZone_OnExecute;
         void PlayerEnteredDeathZone_OnExecute(PlayerEnteredDeathZone ev) {
-            // Debug.Log("Enter the domain of Death...");
+            if (DebugLevel > 1)
+                Debug.Log("Enter the domain of Death...");
             // Extra penalty for entering the Death Zone
             // AddReward(-0.25f);
             // rewardEpisode += -0.25f;
@@ -249,7 +255,8 @@ public class PlayerAgent : Agent {
 
         PlayerTokenCollision.OnExecute += PlayerTokenCollision_OnExecute;
         void PlayerTokenCollision_OnExecute(PlayerTokenCollision ev) {
-            // Debug.Log(string.Format("Got it (+{0:0.0000})!", rewardTokenCollect));
+            if (DebugLevel > 1)
+                Debug.Log($"Got it (+{rewardTokenCollect:0.0000})!");
             // Reward for collecting tokens
             AddReward(rewardTokenCollect);  // <-- +0.5f
             rewardEpisode += rewardTokenCollect;
@@ -263,7 +270,8 @@ public class PlayerAgent : Agent {
 
         EnemyDeath.OnExecute += EnemyDeath_OnExecute;
         void EnemyDeath_OnExecute(EnemyDeath ev) {
-            // Debug.Log(string.Format("Crush (+{0:0.0000})!", rewardEnemyKill));
+            if (DebugLevel > 1)
+                Debug.Log($"Crush (+{rewardEnemyKill:0.0000})!");
             facedEnemy = false;
             // Reward for crushing enemies
             AddReward(rewardEnemyKill);  // <-- +0.5f
@@ -277,12 +285,14 @@ public class PlayerAgent : Agent {
             // There are many faces of Death, but you must face the only one
             if (!playerDead) {
                 if (facedEnemy) {
-                    // Debug.Log("You've been pwned (-1.0)!");
+                    if (DebugLevel > 1)
+                        Debug.Log($"You've been pwned (-{PenaltyKilled})!");
                     facedEnemy = false;
                     playerDead = true;
                     endReason = Reason.KILLED;
                 } else {
-                    // Debug.Log("You've died (-1.0)!");
+                    if (DebugLevel > 1)
+                        Debug.Log($"You've died (-{PenaltyFallen})!");
                     playerDead = true;
                     endReason = Reason.FALLEN;
                 }
@@ -401,7 +411,7 @@ public class PlayerAgent : Agent {
         // model.player.velocity = model.player.targetVelocity;  // <-- done in FixedUpdate in KinematicObject
         // discountPositional = Mathf.Clamp((targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
         if (episodeActive) {
-            float tick = GetPositionalCoefficient() * penaltyStepPositional * 1.0f;
+            float tick = GetPositionalCoefficient() * penaltyStepPositional * 1.0f;  // TODO: avoid initialization
             AddReward(tick);
             penaltyStepsTotal += tick;
         }
@@ -417,19 +427,24 @@ public class PlayerAgent : Agent {
         // base.OnEpisodeBegin();
         // Reset variables as at the beginning of an episode (number of collisions are reset after)
         // numCollisions = 0.0f;  // goes after respawn
-        // Debug.Log(string.Format("Stop episode: episodes played = {0}, step count = {1}",
-        //                         CompletedEpisodes, _StepCount));
-        string report = (
-                $"Episode = {CompletedEpisodes}, steps = {stepCount} ({endReasonNames[(int) endReason]})"
-                + $", rewards = {rewardEpisode}, penalties = {penaltyStepsTotal + penaltyResidual + penaltyEpisodeEnd}"
-                + $", positional = {GetPositionalCoefficient()}"
-        );
-        if (endReason != Reason.TIMEOUT) {
-            report += (
-                $", penalty steps/residual/episode = {penaltyStepsTotal}/{penaltyResidual}/{penaltyStepsTotal + penaltyResidual}"
+        if (DebugLevel > 1)
+            Debug.Log($"Stop episode: episodes played = {CompletedEpisodes}");
+        if (DebugLevel > 0) {
+            string report = (
+                    $"Episode = {CompletedEpisodes}"
+                    + $", steps = {stepCount} ({endReasonNames[(int) endReason]})"
+                    + $", rewards = {rewardEpisode}"
+                    + $", penalties = {penaltyStepsTotal + penaltyResidual + penaltyEpisodeEnd}"
+                    + $", positional = {GetPositionalCoefficient()}"
             );
+            if (endReason != Reason.TIMEOUT) {
+                report += (
+                    $", penalty steps/residual/episode = {penaltyStepsTotal}/{penaltyResidual}"
+                    + $"/{penaltyStepsTotal + penaltyResidual}"
+                );
+            }
+            Debug.Log(report);
         }
-        Debug.Log(report);
         // SaveConfig();
         if (CurriculumEnabled && endReason != Reason.WON) {
             // Decrease available spawn points if the agent doing bad
@@ -485,8 +500,11 @@ public class PlayerAgent : Agent {
                 stopJump = true;
                 Schedule<PlayerStopJump>().player = model.player;
             }
-            // Debug.Log(string.Format("Move x = {0}, velocity x = {1}, target velocity x = {2}",
-            //                         move.x, model.player.velocity.x, model.player.targetVelocity.x));
+            if (DebugLevel > 2)
+                Debug.Log(
+                    $"Move x = {move.x}, velocity x = {model.player.velocity.x}"
+                    + $", target velocity x = {model.player.targetVelocity.x}"
+                );  // this will generate a lot of debug output
         } else {
             move.x = 0.0f;
         }
@@ -543,16 +561,22 @@ public class PlayerAgent : Agent {
         model.player.animator.SetFloat("velocityX", Mathf.Abs(model.player.velocity.x) / model.player.maxSpeed);
 
         model.player.targetVelocity = move * model.player.maxSpeed;
-        // Debug.Log(string.Format("Player target velocity x = {0}, y = {1}",
-        //                         model.player.targetVelocity.x, model.player.targetVelocity.y));
+        if (DebugLevel > 2)
+            Debug.Log(
+                $"Player target velocity x = {model.player.targetVelocity.x}"
+                + $", y = {model.player.targetVelocity.y}"
+            );  // this will generate a lot of debug output
 
         // Punish agent if it runs into an obstacle
         if (body != null) {
             numContacts = body.GetContacts(filterContacts, contacts);
             for (int i = 0; i < numContacts; i ++) {
                 if (Math.Abs(Math.Round(contacts[i].normal.x)) == 1) {
-                    // Debug.Log(string.Format("Contact {0}, value = {1}, num contacts = {2}!", i,
-                    //                         contacts[i].normal.x, numContacts));
+                    if (DebugLevel > 2)
+                        Debug.Log(
+                            $"Contact {i}, value = {contacts[i].normal.x}"
+                            +$", num contacts = {numContacts}!"
+                        );  // this will generate a lot of debug output
                     numCollisions += 1;  // increment collision detector
                     break;
                 }
@@ -562,7 +586,8 @@ public class PlayerAgent : Agent {
                 }
             }
             if (numCollisions >= CollisionsMax && model.player.controlEnabled) {
-                // Debug.Log("You're stuck!");
+                if (DebugLevel > 1)
+                    Debug.Log("You're stuck!");
                 endReason = Reason.STUCK;
                 numCollisions = 0;
                 model.player.controlEnabled = false;
@@ -572,7 +597,8 @@ public class PlayerAgent : Agent {
             } else {
             }
             // if (numContacts > 6) {
-            //     // Debug.Log(string.Format("Number of contacts = {0}", numContacts));
+            //     if (DebugLevel > 2)
+            //         Debug.Log($"Number of contacts = {numContacts}");  // this will generate a lot of debug output
             //     numCollisions += 1;
             // } else {
             //     numCollisions = 0;
