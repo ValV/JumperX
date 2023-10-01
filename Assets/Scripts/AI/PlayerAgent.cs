@@ -20,8 +20,11 @@ public class PlayerAgent : Agent {
     public float TokenGetReward = 1.0f;
     public float EnemyKillReward = 1.0f;
     public float WinReward = 1.0f;
-    public float TickPenalty = 1.0f;  // penalty for whole episode (max steps)
-    public int MaxCollisions = 250;  // maximum number of collisions with obstacles to end episode
+    public float EpisodePenalty = 1.0f;  // penalty for whole episode (max steps)
+    public float KilledPenalty = 1.0f;  // penalty for being killed by an enemy
+    public float FallenPenalty = 1.0f;  // penalty for fall down the edge
+    public float CollisionPenalty = 1.0f;  // penalty for colliding for certain ammount of times
+    public int MaxCollisions = 150;  // maximum number of collisions with obstacles to end episode
     public bool CurriculumEnabled = false;
     public int CurriculumWins = 10;
     public int CurriculumFailures = 10;
@@ -46,12 +49,13 @@ public class PlayerAgent : Agent {
     internal readonly PlatformerModel model = GetModel<PlatformerModel>();
     internal Rigidbody2D body;
 
-    // Move and jump states
+    // Player move and jump states
     internal bool jump;
     internal bool startJump = false;
     internal bool stopJump;
     internal Vector2 move;
 
+    // Scene and Palyer states
     internal bool facedEnemy = false;
     internal bool playerDead = false;
     internal bool episodeActive = true;  // episode lock (avoid multiple episode ends per death)
@@ -59,13 +63,14 @@ public class PlayerAgent : Agent {
     internal int stepCount = 0;  // current episode steps (mirror ML Agents episode steps)
 
 
-    internal float penaltyTick = 0.0f;  // penalty per update tick (calculated)
-    internal float penaltyEpisode = 0.0f;  // residual penalty (calculated)
-    internal float penaltyTotal = 0.0f;  // total accumulated penalty per episode (calculated)
+    internal float penaltyStepPositional = 0.0f;  // penalty per update tick (calculated)
+    internal float penaltyStepsTotal = 0.0f;  // residual penalty (calculated)
+    internal float penaltyResidual = 0.0f;  // total accumulated penalty per episode (calculated)
+    internal float penaltyEpisodeEnd = 0.0f;  // final episode penalty (if not win)
     internal float rewardEpisode = 0.0f;  // total accumulated reward per episode (calculated)
     internal float rewardTokenCollect = 1.0e-5f;  // reward per collected token (calculated)
     internal float rewardEnemyKill = 1.0e-5f;  // reward per killed enemy (calculated)
-    internal float discountPositional = 0.0f;  // positional coefficient (calculated on Player's X position)
+    // internal float discountPositional = 0.0f;  // positional coefficient (calculated on Player's X position)
 
     // Collision detection
     internal int numCollisions = 0;  // accumulated number of collisions (calculated)
@@ -134,8 +139,8 @@ public class PlayerAgent : Agent {
         // Debug.Log(string.Format("Token weight = {0}", weightToken));
         float weightEnemy = 1.0f - weightToken;
         // Debug.Log(string.Format("Enemy weight = {0}", weightEnemy));
-        rewardTokenCollect = 1.0f / tokens.Length * weightToken * TokenGetReward;
-        rewardEnemyKill = 1.0f / enemies.Length * weightEnemy * EnemyKillReward;
+        rewardTokenCollect = TokenGetReward * weightToken / tokens.Length;
+        rewardEnemyKill = EnemyKillReward * weightEnemy / enemies.Length;
         // contacts = new List<ContactPoint2D>();
         contacts = new ContactPoint2D[8];
         filterContacts = new ContactFilter2D();
@@ -144,7 +149,7 @@ public class PlayerAgent : Agent {
         // filterContacts.useOutsideNormalAngle = true;
         // filterContacts.SetDepth(0.95f, 1.05f);
         body = model.player.GetComponent<Rigidbody2D>();
-        penaltyTick = -TickPenalty / MaxStep;
+        penaltyStepPositional = (MaxStep > 0) ? -EpisodePenalty / MaxStep : 0;
         // penaltyEpisode = 0.0f;
         // rewardEpisode = 0.0f;
 
@@ -172,7 +177,7 @@ public class PlayerAgent : Agent {
                     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
                 ].transform;
             }
-            StopEpisode(1.0f);
+            StopEpisode(WinReward);
             // --> EndEpisode
             Schedule<PlayerSpawn>(2);
         }
@@ -211,7 +216,7 @@ public class PlayerAgent : Agent {
 
         PlayerDeath.OnExecute += PlayerDeath_OnExecute;
         void PlayerDeath_OnExecute(PlayerDeath ev) {
-            /// This function in practice is being called multiple time before respawn
+            /// This function in practice is being called multiple times before respawn
             /// so guard episodes with 'episodeActive' variable which is reset on true respawn
             // There are many faces of Death, but you must face the only one
             if (!playerDead) {
@@ -228,7 +233,11 @@ public class PlayerAgent : Agent {
             } else {
                 // Now you're successfully dead
                 if (episodeActive) {
-                    StopEpisode(-1.0f);
+                    if (endReason == Reason.FALLEN) {
+                        StopEpisode(-FallenPenalty);  // -penalty = reward
+                    } else {
+                        StopEpisode(-KilledPenalty);  // -penalty = reward
+                    }
                 }
                 // --> EndEpisode
             }
@@ -276,26 +285,54 @@ public class PlayerAgent : Agent {
         }
     }
 
+    private float GetPositionalCoefficient() {
+        return Mathf.Clamp((targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
+    }
+
     void StopEpisode(float reward) {
+        // This method is not called on timeout!
         // Prepare and terminate episode
         // AddReward(reward);
         // rewardEpisode += reward;
         // Discounted penalty - less penalty if agent is closer to Victory, more otherwise
         // reward = penaltyTemporal * (targetX - model.player.transform.position.x) / targetX - penaltyEpisode;
-        discountPositional = Mathf.Clamp((targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
-        penaltyTotal = -1 * discountPositional;
-        if (reward < 0) {
-            //
-            AddReward(penaltyTotal - penaltyEpisode);  // dead: add residual penalty down to -1
-        } else {
-            AddReward(1.0f * WinReward);  // - rewardEpisode);  // win: add reward up to +1
-            rewardEpisode += 1.0f * WinReward;
+        // discountPositional = ;
+        penaltyResidual = (
+            GetPositionalCoefficient() * penaltyStepPositional * MaxStep - penaltyStepsTotal
+        );  // residual steps penalty
+        switch (endReason) {
+            case Reason.TIMEOUT: {
+                break;  // stub (this method is not called on timeout)
+            }
+            case Reason.KILLED:
+            case Reason.FALLEN:
+            case Reason.STUCK: {
+                AddReward(reward + penaltyResidual);  // fix agent's "suicide cheat"
+                penaltyEpisodeEnd += reward;
+                break;
+            }
+            case Reason.WON: {
+                AddReward(reward);  // do not add residual penalty (bonus for speed)
+                rewardEpisode += reward;
+                break;
+            }
+            default: {
+                break;
+            }
         }
-        // reward = Mathf.Clamp(1.0f - (targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
-        // AddReward(reward);
-        // rewardEpisode += reward;
-        // _StepCount = StepCount;
-        // Debug.Log(string.Format("Stop episode: discount positional = {0}", discountPositional));
+        // if (reward < 0) {
+        //     // Negative rewards (penalties): <type of death> + <positional> + <episode steps>
+        //     // Penalty happens on maximum steps reached, collision or death
+        //     AddReward(penaltyResidual);  // dead: add residual penalty down to -1
+        // } else {
+        //     AddReward(1.0f * WinReward);  // - rewardEpisode);  // win: add reward up to +1
+        //     rewardEpisode += 1.0f * WinReward;
+        // }
+        // // reward = Mathf.Clamp(1.0f - (targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
+        // // AddReward(reward);
+        // // rewardEpisode += reward;
+        // // _StepCount = StepCount;
+        // // Debug.Log(string.Format("Stop episode: discount positional = {0}", discountPositional));
         episodeActive = false;
         EndEpisode();
     }
@@ -306,38 +343,40 @@ public class PlayerAgent : Agent {
 
     void FixedUpdate() {
         // model.player.velocity = model.player.targetVelocity;  // <-- done in FixedUpdate in KinematicObject
-        discountPositional = Mathf.Clamp((targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
-        AddReward(penaltyTick * discountPositional);
-        penaltyEpisode += penaltyTick * discountPositional;
+        // discountPositional = Mathf.Clamp((targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
+        if (episodeActive) {
+            float tick = GetPositionalCoefficient() * penaltyStepPositional * 1.0f;
+            AddReward(tick);
+            penaltyStepsTotal += tick;
+        }
+        // AddReward(penaltyTick * discountPositional);
+        // penaltyEpisode += penaltyTick * discountPositional;
         // rewardEpisode += penalty;
         stepCount = StepCount;
     }
 
     public override void OnEpisodeBegin() {
+        // Episode begins and ends where the player is at the moment,
+        // after the begining of the episode, player is to be teleported to a spawn point
         // base.OnEpisodeBegin();
-        // Reset variables as at the beginning of an episode
-        // numCollisions = 0.0f;
+        // Reset variables as at the beginning of an episode (number of collisions are reset after)
+        // numCollisions = 0.0f;  // goes after respawn
         // Debug.Log(string.Format("Stop episode: episodes played = {0}, step count = {1}",
         //                         CompletedEpisodes, _StepCount));
         string report = (
                 $"Episode = {CompletedEpisodes}, steps = {stepCount} ({endReasonNames[(int) endReason]})"
-                + $", rewards = {rewardEpisode}, penalties = {penaltyEpisode}"
-                + $", discount positional = {discountPositional}"
+                + $", rewards = {rewardEpisode}, penalties = {penaltyStepsTotal + penaltyResidual + penaltyEpisodeEnd}"
+                + $", positional = {GetPositionalCoefficient()}"
         );
-        // if (penaltyTotal != 0) {
         if (endReason != Reason.TIMEOUT) {
             report += (
-                // $"Episode = {CompletedEpisodes}, steps = {_StepCount}"
-                // + $", rewards = {rewardEpisode}, penalties = {penaltyEpisode}"
-                // + $", discount positional = {discountPositional}"
-                $", penalty positional = {penaltyTotal}"
-                + $", penalty residual = {penaltyTotal - penaltyEpisode}"
+                $", penalty steps/residual/episode = {penaltyStepsTotal}/{penaltyResidual}/{penaltyStepsTotal + penaltyResidual}"
             );
         }
         Debug.Log(report);
         if (CurriculumEnabled && endReason != Reason.WON) {
             // Decrease available spawn points if the agent doing bad
-            if (curriculumFailCount >= CurriculumWins * CurriculumFailures) {
+            if (curriculumFailCount >= CurriculumFailures) {
                 curriculumFailCount = 0;
                 curriculumSpawnIndex ++;
                 curriculumSpawnIndex = Math.Min(curriculumSpawnIndex, curriculumSpawnDepth - 1);
@@ -346,10 +385,11 @@ public class PlayerAgent : Agent {
                 random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
             ].transform;
         }
-        penaltyEpisode = 0.0f;  // reset timely penalty
-        penaltyTotal = 0.0f;
+        penaltyStepsTotal = 0.0f;  // reset accumulated steps penalty
+        penaltyResidual = 0.0f;
+        penaltyEpisodeEnd = 0.0f;
         rewardEpisode = 0.0f;
-        endReason = Reason.TIMEOUT;
+        endReason = Reason.TIMEOUT;  // set timeout as a default reason (here's no hook for it)
     }
 
     public override void CollectObservations(VectorSensor sensor) {
@@ -470,7 +510,7 @@ public class PlayerAgent : Agent {
                 numCollisions = 0;
                 model.player.controlEnabled = false;
                 playerDead = true;
-                StopEpisode(-1.0f);
+                StopEpisode(-CollisionPenalty);
                 Schedule<PlayerSpawn>(0);
             } else {
             }
