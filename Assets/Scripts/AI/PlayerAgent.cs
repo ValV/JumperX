@@ -17,14 +17,14 @@ public class PlayerAgent : Agent {
     class Config {
         public uint DebugLevel;
     }
-    public float TokenGetReward = 1.0f;
-    public float EnemyKillReward = 1.0f;
-    public float WinReward = 1.0f;
-    public float EpisodePenalty = 1.0f;  // penalty for whole episode (max steps)
-    public float KilledPenalty = 1.0f;  // penalty for being killed by an enemy
-    public float FallenPenalty = 1.0f;  // penalty for fall down the edge
-    public float CollisionPenalty = 1.0f;  // penalty for colliding for certain ammount of times
-    public int MaxCollisions = 150;  // maximum number of collisions with obstacles to end episode
+    public float RewardGetToken = 1.0f;
+    public float RewardKillEnemy = 1.0f;
+    public float RewardWin = 1.0f;
+    public float PenaltyMaxStep = 1.0f;  // penalty for whole episode (max steps)
+    public float PenaltyKilled = 1.0f;  // penalty for being killed by an enemy
+    public float PenaltyFallen = 1.0f;  // penalty for fall down the edge
+    public float PenaltyCollisions = 1.0f;  // penalty for colliding for certain ammount of times
+    public int CollisionsMax = 150;  // maximum number of collisions with obstacles to end episode
     public bool CurriculumEnabled = false;
     public int CurriculumWins = 10;
     public int CurriculumFailures = 10;
@@ -139,8 +139,8 @@ public class PlayerAgent : Agent {
         // Debug.Log(string.Format("Token weight = {0}", weightToken));
         float weightEnemy = 1.0f - weightToken;
         // Debug.Log(string.Format("Enemy weight = {0}", weightEnemy));
-        rewardTokenCollect = TokenGetReward * weightToken / tokens.Length;
-        rewardEnemyKill = EnemyKillReward * weightEnemy / enemies.Length;
+        rewardTokenCollect = RewardGetToken * weightToken / tokens.Length;
+        rewardEnemyKill = RewardKillEnemy * weightEnemy / enemies.Length;
         // contacts = new List<ContactPoint2D>();
         contacts = new ContactPoint2D[8];
         filterContacts = new ContactFilter2D();
@@ -149,7 +149,7 @@ public class PlayerAgent : Agent {
         // filterContacts.useOutsideNormalAngle = true;
         // filterContacts.SetDepth(0.95f, 1.05f);
         body = model.player.GetComponent<Rigidbody2D>();
-        penaltyStepPositional = (MaxStep > 0) ? -EpisodePenalty / MaxStep : 0;
+        penaltyStepPositional = (MaxStep > 0) ? -PenaltyMaxStep / MaxStep : 0;
         // penaltyEpisode = 0.0f;
         // rewardEpisode = 0.0f;
 
@@ -177,7 +177,7 @@ public class PlayerAgent : Agent {
                     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
                 ].transform;
             }
-            StopEpisode(WinReward);
+            StopEpisode(RewardWin);
             // --> EndEpisode
             Schedule<PlayerSpawn>(2);
         }
@@ -234,9 +234,9 @@ public class PlayerAgent : Agent {
                 // Now you're successfully dead
                 if (episodeActive) {
                     if (endReason == Reason.FALLEN) {
-                        StopEpisode(-FallenPenalty);  // -penalty = reward
+                        StopEpisode(-PenaltyFallen);  // -penalty = reward
                     } else {
-                        StopEpisode(-KilledPenalty);  // -penalty = reward
+                        StopEpisode(-PenaltyKilled);  // -penalty = reward
                     }
                 }
                 // --> EndEpisode
@@ -504,13 +504,13 @@ public class PlayerAgent : Agent {
                     numCollisions = Math.Max(numCollisions - 1, 0);  // >= 0
                 }
             }
-            if (numCollisions >= MaxCollisions && model.player.controlEnabled) {
+            if (numCollisions >= CollisionsMax && model.player.controlEnabled) {
                 // Debug.Log("You're stuck!");
                 endReason = Reason.STUCK;
                 numCollisions = 0;
                 model.player.controlEnabled = false;
                 playerDead = true;
-                StopEpisode(-CollisionPenalty);
+                StopEpisode(-PenaltyCollisions);
                 Schedule<PlayerSpawn>(0);
             } else {
             }
