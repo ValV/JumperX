@@ -10,12 +10,27 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 
 public class PlayerAgent : Agent {
     // Config and public fields
     [Serializable]
     class Config {
-        public uint DebugLevel;
+        // public Config() {
+        //     // Default constructor
+        // }
+        public float RewardGetToken = 1.0f;
+        public float RewardKillEnemy = 1.0f;
+        public float RewardWin = 1.0f;
+        public float PenaltyMaxStep = 1.0f;  // penalty for whole episode (max steps)
+        public float PenaltyKilled = 1.0f;  // penalty for being killed by an enemy
+        public float PenaltyFallen = 1.0f;  // penalty for fall down the edge
+        public float PenaltyCollisions = 1.0f;  // penalty for colliding for certain ammount of times
+        public int CollisionsMax = 150;  // maximum number of collisions with obstacles to end episode
+        public bool CurriculumEnabled = false;
+        public int CurriculumWins = 10;
+        public int CurriculumFailures = 10;
+        public uint DebugLevel = 0;
     }
     public float RewardGetToken = 1.0f;
     public float RewardKillEnemy = 1.0f;
@@ -99,7 +114,48 @@ public class PlayerAgent : Agent {
     // Misc
     internal static System.Random random;
 
+    private Config config = new Config();
+
+    internal void LoadConfig(string fileName = "config.json") {
+        if (File.Exists(fileName)) {
+            var cfg = File.ReadAllText(fileName, Encoding.UTF8);
+            Debug.Log($"DEBUG: read config = {cfg}\n");
+            JsonUtility.FromJsonOverwrite(cfg, config);
+        }
+        RewardGetToken = config.RewardGetToken;
+        RewardKillEnemy = config.RewardKillEnemy;
+        RewardWin = config.RewardWin;
+        PenaltyMaxStep = config.PenaltyMaxStep;
+        PenaltyKilled = config.PenaltyKilled;
+        PenaltyFallen = config.PenaltyFallen;
+        PenaltyCollisions = config.PenaltyCollisions;
+        CollisionsMax = config.CollisionsMax;
+        CurriculumEnabled = config.CurriculumEnabled;
+        CurriculumWins = config.CurriculumWins;
+        CurriculumFailures = config.CurriculumFailures;
+        DebugLevel = config.DebugLevel;
+    }
+
+    internal void SaveConfig(string fileName = "config.json") {
+        config.RewardGetToken = RewardGetToken;
+        config.RewardKillEnemy = RewardKillEnemy;
+        config.RewardWin = RewardWin;
+        config.PenaltyMaxStep = PenaltyMaxStep;
+        config.PenaltyKilled = PenaltyKilled;
+        config.PenaltyFallen = PenaltyFallen;
+        config.PenaltyCollisions = PenaltyCollisions;
+        config.CollisionsMax = CollisionsMax;
+        config.CurriculumEnabled = CurriculumEnabled;
+        config.CurriculumWins = CurriculumWins;
+        config.CurriculumFailures = CurriculumFailures;
+        config.DebugLevel = DebugLevel;
+        var cfg = JsonUtility.ToJson(config);
+        Debug.Log($"DEBUG: config to save = {cfg}\n");
+        File.WriteAllText(fileName, cfg, Encoding.UTF8);
+    }
+
     void Start() {
+        LoadConfig();  // read parameters from config file
         random = new System.Random();
         curriculumSpawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
         curriculumSpawnPoints.Sort(delegate(GameObject a, GameObject b) {
@@ -374,6 +430,7 @@ public class PlayerAgent : Agent {
             );
         }
         Debug.Log(report);
+        // SaveConfig();
         if (CurriculumEnabled && endReason != Reason.WON) {
             // Decrease available spawn points if the agent doing bad
             if (curriculumFailCount >= CurriculumFailures) {
