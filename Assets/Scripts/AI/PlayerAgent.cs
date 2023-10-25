@@ -11,6 +11,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using UnityEngine.UI;
+using Unity.VisualScripting;
+
 
 public class PlayerAgent : Agent {
     // Config and public fields
@@ -116,6 +119,9 @@ public class PlayerAgent : Agent {
 
     private Config config = new Config();
 
+    private Image gaugeMove;
+    private Image gaugeJump;
+
     internal void LoadConfig(string fileName = "config.json") {
         var cfg = "";
         if (File.Exists(fileName)) {
@@ -159,6 +165,8 @@ public class PlayerAgent : Agent {
 
     void Start() {
         LoadConfig();  // read parameters from config file
+        gaugeMove = GameObject.FindGameObjectWithTag("GaugeMove").ConvertTo<Image>();
+        gaugeJump = GameObject.FindGameObjectWithTag("GaugeJump").ConvertTo<Image>();
         random = new System.Random();
         curriculumSpawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
         curriculumSpawnPoints.Sort(delegate(GameObject a, GameObject b) {
@@ -405,6 +413,8 @@ public class PlayerAgent : Agent {
 
     void Update() {
         startJump = (startJump || Input.GetButtonDown("Jump")) && !Input.GetButtonUp("Jump"); 
+        gaugeMove.fillAmount = move.x / 2.0f + 0.5f;
+        gaugeJump.fillAmount = move.y / 2.0f + 0.5f;
     }
 
     void FixedUpdate() {
@@ -493,6 +503,7 @@ public class PlayerAgent : Agent {
         // <-- Controller.Update - user input counterpart in this.Update
         if (model.player.controlEnabled) {
             move.x = vectorAction[0];  // [-1, 1]
+            move.y = vectorAction[1];  // [-1, 1]
             jump = vectorAction[1] > 0;
             if (model.player.jumpState == PlayerController.JumpState.Grounded && jump) {
                 model.player.jumpState = PlayerController.JumpState.PrepareToJump;
@@ -507,6 +518,7 @@ public class PlayerAgent : Agent {
                 );  // this will generate a lot of debug output
         } else {
             move.x = 0.0f;
+            move.y = 0.0f;
         }
 
         // <-- Controller.UpdateJumpState
