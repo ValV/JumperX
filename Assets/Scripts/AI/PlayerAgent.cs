@@ -13,6 +13,7 @@ using System.Linq;
 using System.Text;
 using UnityEngine.UI;
 using Unity.VisualScripting;
+using Unity.Mathematics;
 
 
 public class PlayerAgent : Agent {
@@ -22,6 +23,7 @@ public class PlayerAgent : Agent {
         // public Config() {
         //     // Default constructor
         // }
+        public float ScaleRewards = 1.0f;
         public float RewardGetToken = 1.0f;
         public float RewardKillEnemy = 1.0f;
         public float RewardWin = 1.0f;
@@ -30,11 +32,14 @@ public class PlayerAgent : Agent {
         public float PenaltyFallen = 1.0f;  // penalty for fall down the edge
         public float PenaltyCollisions = 1.0f;  // penalty for colliding for certain ammount of times
         public int CollisionsMax = 150;  // maximum number of collisions with obstacles to end episode
+        public string SpawnSampling = "none";
+        public float PoissonLambda = 1.333f;
         public bool CurriculumEnabled = false;
         public int CurriculumWins = 10;
         public int CurriculumFailures = 10;
         public uint DebugLevel = 0;
     }
+    public float ScaleRewards = 1.0f;
     public float RewardGetToken = 1.0f;
     public float RewardKillEnemy = 1.0f;
     public float RewardWin = 1.0f;
@@ -43,6 +48,15 @@ public class PlayerAgent : Agent {
     public float PenaltyFallen = 1.0f;  // penalty for fall down the edge
     public float PenaltyCollisions = 1.0f;  // penalty for colliding for certain ammount of times
     public int CollisionsMax = 150;  // maximum number of collisions with obstacles to end episode
+
+    public enum Sampling {
+        None,
+        Uniform,
+        Poisson
+    };
+    public Sampling SpawnSampling = Sampling.None;
+    public float PoissonLambda = 1.333f;
+
     public bool CurriculumEnabled = false;
     public int CurriculumWins = 10;
     public int CurriculumFailures = 10;
@@ -107,20 +121,37 @@ public class PlayerAgent : Agent {
     internal TokenController tokenController; // => model.FindObjectsOfType<TokenController>();
     internal GameController Game => FindObjectOfType<GameController>();
 
+    // Spawn points
+    internal List<GameObject> spawnPoints;  // list of spawn points (initialized on start)
+    internal int spawnDepth = 1;
+    internal int spawnIndex = 0;
+
     // Curriculum
-    internal List<GameObject> curriculumSpawnPoints;  // list of spawn points (initialized on start)
     internal int curriculumWinCount = 0;  // episode win counter for curriculum (calculated)
     internal int curriculumFailCount = 0;  // episode fail counter for curriculum (calculated)
     internal int curriculumSpawnIndex = 0;  // current spawn point index (calculated)
-    internal int curriculumSpawnDepth = 1;
 
     // Misc
     internal static System.Random random;
+    // internal int randomPoisson = 0;
 
     private Config config = new Config();
 
     private Image gaugeMove;
     private Image gaugeJump;
+    private Text statusBL;
+    private Text statusUR;
+
+    int Poisson(float lambda) {
+        double p = 1.0;
+        double L = Math.Exp(-lambda);
+        int k = 0;
+        do {
+            k ++;
+            p *= random.NextDouble();
+        } while (p > L);
+        return k - 1;
+    }
 
     internal void LoadConfig(string fileName = "config.json") {
         var cfg = "";
@@ -128,6 +159,7 @@ public class PlayerAgent : Agent {
             cfg = File.ReadAllText(fileName, Encoding.UTF8);
             JsonUtility.FromJsonOverwrite(cfg, config);
         }
+        ScaleRewards = config.ScaleRewards;
         RewardGetToken = config.RewardGetToken;
         RewardKillEnemy = config.RewardKillEnemy;
         RewardWin = config.RewardWin;
@@ -136,6 +168,8 @@ public class PlayerAgent : Agent {
         PenaltyFallen = config.PenaltyFallen;
         PenaltyCollisions = config.PenaltyCollisions;
         CollisionsMax = config.CollisionsMax;
+        Enum.TryParse(config.SpawnSampling, true, out SpawnSampling);
+        PoissonLambda = config.PoissonLambda;
         CurriculumEnabled = config.CurriculumEnabled;
         CurriculumWins = config.CurriculumWins;
         CurriculumFailures = config.CurriculumFailures;
@@ -145,6 +179,7 @@ public class PlayerAgent : Agent {
     }
 
     internal void SaveConfig(string fileName = "config.json") {
+        config.ScaleRewards = ScaleRewards;
         config.RewardGetToken = RewardGetToken;
         config.RewardKillEnemy = RewardKillEnemy;
         config.RewardWin = RewardWin;
@@ -153,6 +188,8 @@ public class PlayerAgent : Agent {
         config.PenaltyFallen = PenaltyFallen;
         config.PenaltyCollisions = PenaltyCollisions;
         config.CollisionsMax = CollisionsMax;
+        config.SpawnSampling = SpawnSampling.ToString().ToLower();
+        config.PoissonLambda = PoissonLambda;
         config.CurriculumEnabled = CurriculumEnabled;
         config.CurriculumWins = CurriculumWins;
         config.CurriculumFailures = CurriculumFailures;
@@ -167,17 +204,20 @@ public class PlayerAgent : Agent {
         LoadConfig();  // read parameters from config file
         gaugeMove = GameObject.FindGameObjectWithTag("GaugeMove").ConvertTo<Image>();
         gaugeJump = GameObject.FindGameObjectWithTag("GaugeJump").ConvertTo<Image>();
+        statusBL = GameObject.FindGameObjectWithTag("Status").ConvertTo<Text>();
+        statusUR = GameObject.FindGameObjectWithTag("Steps").ConvertTo<Text>();
         random = new System.Random();
-        curriculumSpawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
-        curriculumSpawnPoints.Sort(delegate(GameObject a, GameObject b) {
+        spawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
+        spawnPoints.Sort(delegate(GameObject a, GameObject b) {
             return a.name.CompareTo(b.name);
         });
+        spawnDepth = spawnPoints.Count;
         if (CurriculumEnabled) {
-            curriculumSpawnDepth = curriculumSpawnPoints.Count;
-            curriculumSpawnIndex = curriculumSpawnDepth - 1;
+            curriculumSpawnIndex = spawnDepth - 1;
+            spawnIndex = curriculumSpawnIndex;
         }
-        model.spawnPoint = curriculumSpawnPoints[
-            random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+        model.spawnPoint = spawnPoints[
+            spawnIndex
         ].transform;
         model.player.Teleport(model.spawnPoint.transform.position);
         enemies = FindObjectsOfType<EnemyController>().ToList().ConvertAll(item => item.gameObject).ToArray();
@@ -234,17 +274,19 @@ public class PlayerAgent : Agent {
             // Game completed successfully
             endReason = Reason.WON;
             // Respawn at one of the spawn points
-            curriculumWinCount ++;
             if (CurriculumEnabled) {
                 // Increase available spawn points if the agent is doing well
+                curriculumWinCount ++;
                 if (curriculumWinCount >= CurriculumWins) {
                     curriculumWinCount = 0;
+                    curriculumFailCount = 0;  // asymmetrically reset fail count (failures do not reset wins)
                     curriculumSpawnIndex --;
                     curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
+                    spawnIndex = curriculumSpawnIndex;
                 }
-                model.spawnPoint = curriculumSpawnPoints[
-                    random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
-                ].transform;
+                // model.spawnPoint = curriculumSpawnPoints[
+                //     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+                // ].transform;
             }
             StopEpisode(RewardWin);
             // --> EndEpisode
@@ -266,7 +308,7 @@ public class PlayerAgent : Agent {
             if (DebugLevel > 1)
                 Debug.Log($"Got it (+{rewardTokenCollect:0.0000})!");
             // Reward for collecting tokens
-            AddReward(rewardTokenCollect);  // <-- +0.5f
+            AddReward(rewardTokenCollect * ScaleRewards);  // <-- +0.5f
             rewardEpisode += rewardTokenCollect;
         }
 
@@ -282,7 +324,7 @@ public class PlayerAgent : Agent {
                 Debug.Log($"Crush (+{rewardEnemyKill:0.0000})!");
             facedEnemy = false;
             // Reward for crushing enemies
-            AddReward(rewardEnemyKill);  // <-- +0.5f
+            AddReward(rewardEnemyKill * ScaleRewards);  // <-- +0.5f
             rewardEpisode += rewardEnemyKill;
         }
 
@@ -381,12 +423,12 @@ public class PlayerAgent : Agent {
             case Reason.KILLED:
             case Reason.FALLEN:
             case Reason.STUCK: {
-                AddReward(reward + penaltyResidual);  // fix agent's "suicide cheat"
+                AddReward((reward + penaltyResidual) * ScaleRewards);  // fix agent's "suicide cheat"
                 penaltyEpisodeEnd += reward;
                 break;
             }
             case Reason.WON: {
-                AddReward(reward);  // do not add residual penalty (bonus for speed)
+                AddReward(reward * ScaleRewards);  // do not add residual penalty (bonus for speed)
                 rewardEpisode += reward;
                 break;
             }
@@ -394,18 +436,6 @@ public class PlayerAgent : Agent {
                 break;
             }
         }
-        // if (reward < 0) {
-        //     // Negative rewards (penalties): <type of death> + <positional> + <episode steps>
-        //     // Penalty happens on maximum steps reached, collision or death
-        //     AddReward(penaltyResidual);  // dead: add residual penalty down to -1
-        // } else {
-        //     AddReward(1.0f * WinReward);  // - rewardEpisode);  // win: add reward up to +1
-        //     rewardEpisode += 1.0f * WinReward;
-        // }
-        // // reward = Mathf.Clamp(1.0f - (targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
-        // // AddReward(reward);
-        // // rewardEpisode += reward;
-        // // _StepCount = StepCount;
         // // Debug.Log(string.Format("Stop episode: discount positional = {0}", discountPositional));
         episodeActive = false;
         EndEpisode();
@@ -422,13 +452,14 @@ public class PlayerAgent : Agent {
         // discountPositional = Mathf.Clamp((targetX - model.player.transform.position.x) / targetX, 0.0f, 1.0f);
         if (episodeActive) {
             float tick = GetPositionalCoefficient() * penaltyStepPositional * 1.0f;  // TODO: avoid initialization
-            AddReward(tick);
+            AddReward(tick * ScaleRewards);
             penaltyStepsTotal += tick;
         }
         // AddReward(penaltyTick * discountPositional);
         // penaltyEpisode += penaltyTick * discountPositional;
         // rewardEpisode += penalty;
         stepCount = StepCount;
+        statusUR.text = $"{StepCount}";
     }
 
     public override void OnEpisodeBegin() {
@@ -456,22 +487,45 @@ public class PlayerAgent : Agent {
             Debug.Log(report);
         }
         // SaveConfig();
-        if (CurriculumEnabled && endReason != Reason.WON) {
-            // Decrease available spawn points if the agent doing bad
-            if (curriculumFailCount >= CurriculumFailures) {
-                curriculumFailCount = 0;
-                curriculumSpawnIndex ++;
-                curriculumSpawnIndex = Math.Min(curriculumSpawnIndex, curriculumSpawnDepth - 1);
+        if (CurriculumEnabled) {
+            if (endReason != Reason.WON) {
+                // Decrease available spawn points if the agent doing bad
+                curriculumFailCount ++;
+                if (curriculumFailCount >= CurriculumFailures) {
+                    curriculumFailCount = 0;
+                    curriculumSpawnIndex ++;
+                    curriculumSpawnIndex = Math.Min(curriculumSpawnIndex, spawnDepth - 1);
+                }
             }
-            model.spawnPoint = curriculumSpawnPoints[
-                random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
-            ].transform;
+            spawnIndex = curriculumSpawnIndex;
+        }
+        switch (SpawnSampling) {
+            case Sampling.None: {
+                model.spawnPoint = spawnPoints[
+                    spawnIndex
+                ].transform;
+                break;
+            }
+            case Sampling.Uniform: {
+                model.spawnPoint = spawnPoints[
+                    random.Next(spawnIndex, spawnDepth)
+                ].transform;
+                break;
+            }
+            case Sampling.Poisson: {
+                model.spawnPoint = spawnPoints[
+                    spawnIndex + (Poisson(PoissonLambda) % (spawnDepth - spawnIndex))
+                ].transform;
+                break;
+            }
         }
         penaltyStepsTotal = 0.0f;  // reset accumulated steps penalty
         penaltyResidual = 0.0f;
         penaltyEpisodeEnd = 0.0f;
         rewardEpisode = 0.0f;
         endReason = Reason.TIMEOUT;  // set timeout as a default reason (here's no hook for it)
+        // Misc
+        statusBL.text = $"Start #{spawnIndex}";
     }
 
     public override void CollectObservations(VectorSensor sensor) {

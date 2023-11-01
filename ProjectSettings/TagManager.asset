@@ -9,6 +9,8 @@ TagManager:
   - Level
   - GaugeMove
   - GaugeJump
+  - Status
+  - Steps
   layers:
   - Default
   - TransparentFX
