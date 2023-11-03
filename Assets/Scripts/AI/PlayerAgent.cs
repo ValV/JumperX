@@ -269,8 +269,11 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
+            var rewardWin = (CurriculumEnabled) ? RewardWin * ((float) (spawnDepth - spawnIndex) / spawnDepth) : RewardWin;
             if (DebugLevel > 1)
-                Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{RewardWin})"));
+                Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{rewardWin})"));
+            else if (DebugLevel > 2)
+                Debug.Log($"Reward win = {rewardWin}, spawn depth = {spawnDepth}, spawn index = {spawnIndex}");
             // Game completed successfully
             endReason = Reason.WON;
             // Respawn at one of the spawn points
@@ -288,7 +291,7 @@ public class PlayerAgent : Agent {
                 //     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
                 // ].transform;
             }
-            StopEpisode(RewardWin);
+            StopEpisode(rewardWin);
             // --> EndEpisode
             Schedule<PlayerSpawn>(2);
         }
