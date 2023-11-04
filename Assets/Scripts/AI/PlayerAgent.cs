@@ -27,11 +27,14 @@ public class PlayerAgent : Agent {
         public float RewardGetToken = 1.0f;
         public float RewardKillEnemy = 1.0f;
         public float RewardWin = 1.0f;
-        public float PenaltyMaxStep = 1.0f;  // penalty for whole episode (max steps)
+        public float PenaltyMaxStep = 1.0f;  // penalty for whole episode (tick per step)
+        public float PenaltyTimeout = 1.0f;  // additional penalty for agent slacking off
         public float PenaltyKilled = 1.0f;  // penalty for being killed by an enemy
         public float PenaltyFallen = 1.0f;  // penalty for fall down the edge
         public float PenaltyCollisions = 1.0f;  // penalty for colliding for certain ammount of times
         public int CollisionsMax = 150;  // maximum number of collisions with obstacles to end episode
+        public float PenaltyJitter = 1.0f;  // penalty for actions near 0 and high dispersion
+        public int JitterPower = 2;  // polynomial curvature of penalty near 0
         public string SpawnSampling = "none";
         public float PoissonLambda = 1.333f;
         public bool CurriculumEnabled = false;
@@ -43,11 +46,14 @@ public class PlayerAgent : Agent {
     public float RewardGetToken = 1.0f;
     public float RewardKillEnemy = 1.0f;
     public float RewardWin = 1.0f;
-    public float PenaltyMaxStep = 1.0f;  // penalty for whole episode (max steps)
+    public float PenaltyMaxStep = 1.0f;  // penalty for whole episode (tick per step)
+    public float PenaltyTimeout = 1.0f;  // additional penalty for agent slacking off
     public float PenaltyKilled = 1.0f;  // penalty for being killed by an enemy
     public float PenaltyFallen = 1.0f;  // penalty for fall down the edge
     public float PenaltyCollisions = 1.0f;  // penalty for colliding for certain ammount of times
     public int CollisionsMax = 150;  // maximum number of collisions with obstacles to end episode
+    public float PenaltyJitter = 1.0f;  // penalty for actions near 0 and high dispersion
+    public int JitterPower = 2;  // polynomial curvature of penalty near 0
 
     public enum Sampling {
         None,
@@ -86,6 +92,7 @@ public class PlayerAgent : Agent {
     internal bool startJump = false;
     internal bool stopJump;
     internal Vector2 move;
+    internal Vector2 moveLastStep;  // actions on previous step
 
     // Scene and Palyer states
     internal bool facedEnemy = false;
@@ -99,6 +106,7 @@ public class PlayerAgent : Agent {
     internal float penaltyStepsTotal = 0.0f;  // residual penalty (calculated)
     internal float penaltyResidual = 0.0f;  // total accumulated penalty per episode (calculated)
     internal float penaltyEpisodeEnd = 0.0f;  // final episode penalty (if not win)
+    internal float penaltyJitter = 0.0f;  // instant value for jitter penalty (public PenaltyJitter)
     internal float rewardEpisode = 0.0f;  // total accumulated reward per episode (calculated)
     internal float rewardTokenCollect = 1.0e-5f;  // reward per collected token (calculated)
     internal float rewardEnemyKill = 1.0e-5f;  // reward per killed enemy (calculated)
@@ -164,10 +172,13 @@ public class PlayerAgent : Agent {
         RewardKillEnemy = config.RewardKillEnemy;
         RewardWin = config.RewardWin;
         PenaltyMaxStep = config.PenaltyMaxStep;
+        PenaltyTimeout = config.PenaltyTimeout;
         PenaltyKilled = config.PenaltyKilled;
         PenaltyFallen = config.PenaltyFallen;
         PenaltyCollisions = config.PenaltyCollisions;
         CollisionsMax = config.CollisionsMax;
+        PenaltyJitter = config.PenaltyJitter;
+        JitterPower = config.JitterPower;
         Enum.TryParse(config.SpawnSampling, true, out SpawnSampling);
         PoissonLambda = config.PoissonLambda;
         CurriculumEnabled = config.CurriculumEnabled;
@@ -184,10 +195,13 @@ public class PlayerAgent : Agent {
         config.RewardKillEnemy = RewardKillEnemy;
         config.RewardWin = RewardWin;
         config.PenaltyMaxStep = PenaltyMaxStep;
+        config.PenaltyTimeout = PenaltyTimeout;
         config.PenaltyKilled = PenaltyKilled;
         config.PenaltyFallen = PenaltyFallen;
         config.PenaltyCollisions = PenaltyCollisions;
         config.CollisionsMax = CollisionsMax;
+        config.PenaltyJitter = PenaltyJitter;
+        config.JitterPower = JitterPower;
         config.SpawnSampling = SpawnSampling.ToString().ToLower();
         config.PoissonLambda = PoissonLambda;
         config.CurriculumEnabled = CurriculumEnabled;
@@ -269,7 +283,7 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
-            var rewardWin = (CurriculumEnabled) ? RewardWin * ((float) (spawnDepth - spawnIndex) / spawnDepth) : RewardWin;
+            var rewardWin = CurriculumEnabled ? RewardWin * ((float) (spawnDepth - spawnIndex) / spawnDepth) : RewardWin;
             if (DebugLevel > 1)
                 Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{rewardWin})"));
             else if (DebugLevel > 2)
@@ -457,6 +471,17 @@ public class PlayerAgent : Agent {
             float tick = GetPositionalCoefficient() * penaltyStepPositional * 1.0f;  // TODO: avoid initialization
             AddReward(tick * ScaleRewards);
             penaltyStepsTotal += tick;
+
+            if (model.player.controlEnabled) {
+                AddReward(penaltyJitter);
+                penaltyEpisodeEnd += penaltyJitter;
+                penaltyJitter = 0.0f;
+            }
+
+            if (stepCount + 2 == MaxStep) {
+                AddReward(-PenaltyTimeout);
+                penaltyEpisodeEnd += -PenaltyTimeout;
+            }
         }
         // AddReward(penaltyTick * discountPositional);
         // penaltyEpisode += penaltyTick * discountPositional;
@@ -559,8 +584,12 @@ public class PlayerAgent : Agent {
 
         // <-- Controller.Update - user input counterpart in this.Update
         if (model.player.controlEnabled) {
+            moveLastStep.x = move.x;
+            moveLastStep.y = move.y;
             move.x = vectorAction[0];  // [-1, 1]
             move.y = vectorAction[1];  // [-1, 1]
+            penaltyJitter = Mathf.Pow(1.0f - Mathf.Abs(move.x), JitterPower) * -PenaltyJitter / MaxStep / 2.0f;
+            penaltyJitter += Mathf.Abs(move.x - moveLastStep.x) * -PenaltyJitter / MaxStep / 4.0f;  // -1..1 = x2
             jump = vectorAction[1] > 0;
             if (model.player.jumpState == PlayerController.JumpState.Grounded && jump) {
                 model.player.jumpState = PlayerController.JumpState.PrepareToJump;
