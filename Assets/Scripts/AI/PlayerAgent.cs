@@ -283,6 +283,7 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
+            model.player.controlEnabled = false;  // disable control (win)
             var rewardWin = CurriculumEnabled ? RewardWin * ((float) (spawnDepth - spawnIndex) / spawnDepth) : RewardWin;
             if (DebugLevel > 1)
                 Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{rewardWin})"));
@@ -312,6 +313,7 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredDeathZone.OnExecute += PlayerEnteredDeathZone_OnExecute;
         void PlayerEnteredDeathZone_OnExecute(PlayerEnteredDeathZone ev) {
+            model.player.controlEnabled = false;  // disable control (death zone)
             if (DebugLevel > 1)
                 Debug.Log("Enter the domain of Death...");
             // Extra penalty for entering the Death Zone
@@ -337,12 +339,17 @@ public class PlayerAgent : Agent {
 
         EnemyDeath.OnExecute += EnemyDeath_OnExecute;
         void EnemyDeath_OnExecute(EnemyDeath ev) {
-            if (DebugLevel > 1)
-                Debug.Log($"Crush (+{rewardEnemyKill:0.0000})!");
-            facedEnemy = false;
-            // Reward for crushing enemies
-            AddReward(rewardEnemyKill * ScaleRewards);  // <-- +0.5f
-            rewardEpisode += rewardEnemyKill;
+            if (!playerDead) {
+                if (DebugLevel > 1)
+                    Debug.Log($"Crush (+{rewardEnemyKill:0.0000})!");
+                facedEnemy = false;
+                // Reward for crushing enemies
+                AddReward(rewardEnemyKill * ScaleRewards);  // <-- +0.5f
+                rewardEpisode += rewardEnemyKill;
+            } else {
+                if (DebugLevel > 1)
+                    Debug.Log($"Enemy kill event collision!");
+            }
         }
 
         PlayerDeath.OnExecute += PlayerDeath_OnExecute;
@@ -350,6 +357,7 @@ public class PlayerAgent : Agent {
             /// This function in practice is being called multiple times before respawn
             /// so guard episodes with 'episodeActive' variable which is reset on true respawn
             // There are many faces of Death, but you must face the only one
+            model.player.controlEnabled = false;  // disable control (player death)
             if (!playerDead) {
                 if (facedEnemy) {
                     if (DebugLevel > 1)
@@ -425,6 +433,7 @@ public class PlayerAgent : Agent {
     void StopEpisode(float reward) {
         // This method is not called on timeout!
         // Prepare and terminate episode
+        episodeActive = false;
         // AddReward(reward);
         // rewardEpisode += reward;
         // Discounted penalty - less penalty if agent is closer to Victory, more otherwise
@@ -454,7 +463,6 @@ public class PlayerAgent : Agent {
             }
         }
         // // Debug.Log(string.Format("Stop episode: discount positional = {0}", discountPositional));
-        episodeActive = false;
         EndEpisode();
     }
 
@@ -616,15 +624,13 @@ public class PlayerAgent : Agent {
                 stopJump = false;
                 break;
             case PlayerController.JumpState.Jumping:
-                if (!model.player.IsGrounded)
-                {
+                if (!model.player.IsGrounded) {
                     Schedule<PlayerJumped>().player = model.player;
                     model.player.jumpState = PlayerController.JumpState.InFlight;
                 }
                 break;
             case PlayerController.JumpState.InFlight:
-                if (model.player.IsGrounded)
-                {
+                if (model.player.IsGrounded) {
                     Schedule<PlayerLanded>().player = model.player;
                     model.player.jumpState = PlayerController.JumpState.Landed;
                 }
@@ -644,8 +650,7 @@ public class PlayerAgent : Agent {
         else if (stopJump)
         {
             stopJump = false;
-            if (model.player.velocity.y > 0)
-            {
+            if (model.player.velocity.y > 0) {
                 model.player.velocity.y *= model.jumpDeceleration;
             }
         }
@@ -684,11 +689,11 @@ public class PlayerAgent : Agent {
                 }
             }
             if (numCollisions >= CollisionsMax && model.player.controlEnabled) {
+                model.player.controlEnabled = false;  // disable control (stuck)
                 if (DebugLevel > 1)
                     Debug.Log("You're stuck!");
                 endReason = Reason.STUCK;
                 numCollisions = 0;
-                model.player.controlEnabled = false;
                 playerDead = true;
                 StopEpisode(-PenaltyCollisions);
                 Schedule<PlayerSpawn>(0);
