@@ -11,6 +11,7 @@ TagManager:
   - GaugeJump
   - Status
   - Steps
+  - Position
   layers:
   - Default
   - TransparentFX

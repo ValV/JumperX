@@ -13,7 +13,6 @@ using System.Linq;
 using System.Text;
 using UnityEngine.UI;
 using Unity.VisualScripting;
-using Unity.Mathematics;
 
 
 public class PlayerAgent : Agent {
@@ -152,6 +151,7 @@ public class PlayerAgent : Agent {
     private Image gaugeJump;
     private Text statusBL;
     private Text statusUR;
+    private Text statusBR;
 
     private float weightEnemy = 1.0f;
     private float weightToken = 1.0f;
@@ -232,6 +232,7 @@ public class PlayerAgent : Agent {
         gaugeJump = GameObject.FindGameObjectWithTag("GaugeJump").ConvertTo<Image>();
         statusBL = GameObject.FindGameObjectWithTag("Status").ConvertTo<Text>();
         statusUR = GameObject.FindGameObjectWithTag("Steps").ConvertTo<Text>();
+        statusBR = GameObject.FindGameObjectWithTag("Position").ConvertTo<Text>();
 
         // Initialize spawn points
         spawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
@@ -512,6 +513,7 @@ public class PlayerAgent : Agent {
         // rewardEpisode += penalty;
         stepCount = StepCount;
         statusUR.text = $"{StepCount}";
+        statusBR.text = $"{GetPositionalCoefficient():0.00}";
     }
 
     public override void OnEpisodeBegin() {
