@@ -95,6 +95,7 @@ public class PlayerAgent : Agent {
     internal Vector2 moveLastStep;  // actions on previous step
 
     // Scene and Palyer states
+    internal bool facedWin = false;
     internal bool facedEnemy = false;
     internal bool playerDead = false;
     internal bool episodeActive = true;  // episode lock (avoid multiple episode ends per death)
@@ -283,32 +284,35 @@ public class PlayerAgent : Agent {
 
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
-            model.player.controlEnabled = false;  // disable control (win)
-            var rewardWin = CurriculumEnabled ? RewardWin * ((float) (spawnDepth - spawnIndex) / spawnDepth) : RewardWin;
-            if (DebugLevel > 1)
-                Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{rewardWin})"));
-            else if (DebugLevel > 2)
-                Debug.Log($"Reward win = {rewardWin}, spawn depth = {spawnDepth}, spawn index = {spawnIndex}");
-            // Game completed successfully
-            endReason = Reason.WON;
-            // Respawn at one of the spawn points
-            if (CurriculumEnabled) {
-                // Increase available spawn points if the agent is doing well
-                curriculumWinCount ++;
-                if (curriculumWinCount >= CurriculumWins) {
-                    curriculumWinCount = 0;
-                    curriculumFailCount = 0;  // asymmetrically reset fail count (failures do not reset wins)
-                    curriculumSpawnIndex --;
-                    curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
-                    spawnIndex = curriculumSpawnIndex;
+            if (!facedWin) {
+                facedWin = true;
+                model.player.controlEnabled = false;  // disable control (win)
+                var rewardWin = CurriculumEnabled ? RewardWin * ((float) (spawnDepth - spawnIndex) / spawnDepth) : RewardWin;
+                if (DebugLevel > 1)
+                    Debug.Log(string.Format($"Ta-da!!! Game completed in {StepCount} steps (+{rewardWin})"));
+                else if (DebugLevel > 2)
+                    Debug.Log($"Reward win = {rewardWin}, spawn depth = {spawnDepth}, spawn index = {spawnIndex}");
+                // Game completed successfully
+                endReason = Reason.WON;
+                // Respawn at one of the spawn points
+                if (CurriculumEnabled) {
+                    // Increase available spawn points if the agent is doing well
+                    curriculumWinCount ++;
+                    if (curriculumWinCount >= CurriculumWins) {
+                        curriculumWinCount = 0;
+                        curriculumFailCount = 0;  // asymmetrically reset fail count (failures do not reset wins)
+                        curriculumSpawnIndex --;
+                        curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
+                        spawnIndex = curriculumSpawnIndex;
+                    }
+                    // model.spawnPoint = curriculumSpawnPoints[
+                    //     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+                    // ].transform;
                 }
-                // model.spawnPoint = curriculumSpawnPoints[
-                //     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
-                // ].transform;
+                StopEpisode(rewardWin);
+                // --> EndEpisode
+                Schedule<PlayerSpawn>(2);
             }
-            StopEpisode(rewardWin);
-            // --> EndEpisode
-            Schedule<PlayerSpawn>(2);
         }
 
         PlayerEnteredDeathZone.OnExecute += PlayerEnteredDeathZone_OnExecute;
@@ -420,6 +424,7 @@ public class PlayerAgent : Agent {
                     enemies[i].transform.position = enemyPositions[i] + Vector3.zero;
                 }
             }
+            facedWin = false;
             playerDead = false;
             episodeActive = true;
             numCollisions = 0;
