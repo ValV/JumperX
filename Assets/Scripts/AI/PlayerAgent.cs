@@ -61,6 +61,8 @@ public class PlayerAgent : Agent {
         Poisson
     };
     public Sampling SpawnSampling = Sampling.None;
+    [Range(0, 8)]
+    public int SpawnPoint = 0;
     public float PoissonLambda = 1.333f;
 
     public bool CurriculumEnabled = false;
@@ -151,6 +153,9 @@ public class PlayerAgent : Agent {
     private Text statusBL;
     private Text statusUR;
 
+    private float weightEnemy = 1.0f;
+    private float weightToken = 1.0f;
+
     int Poisson(float lambda) {
         double p = 1.0;
         double L = Math.Exp(-lambda);
@@ -215,26 +220,28 @@ public class PlayerAgent : Agent {
         File.WriteAllText(fileName, cfg, Encoding.UTF8);
     }
 
-    void Start() {
+    internal void InitializeEnvironment() {
+        // Configuration
         LoadConfig();  // read parameters from config file
+
+        // Initialize system
+        random = new System.Random();
+
+        // Initialize GUI
         gaugeMove = GameObject.FindGameObjectWithTag("GaugeMove").ConvertTo<Image>();
         gaugeJump = GameObject.FindGameObjectWithTag("GaugeJump").ConvertTo<Image>();
         statusBL = GameObject.FindGameObjectWithTag("Status").ConvertTo<Text>();
         statusUR = GameObject.FindGameObjectWithTag("Steps").ConvertTo<Text>();
-        random = new System.Random();
+
+        // Initialize spawn points
         spawnPoints = GameObject.FindGameObjectsWithTag("Respawn").ToList();
         spawnPoints.Sort(delegate(GameObject a, GameObject b) {
             return a.name.CompareTo(b.name);
         });
         spawnDepth = spawnPoints.Count;
-        if (CurriculumEnabled) {
-            curriculumSpawnIndex = spawnDepth - 1;
-            spawnIndex = curriculumSpawnIndex;
-        }
-        model.spawnPoint = spawnPoints[
-            spawnIndex
-        ].transform;
-        model.player.Teleport(model.spawnPoint.transform.position);
+        curriculumSpawnIndex = spawnDepth - 1;
+
+        // Initialize enemies
         enemies = FindObjectsOfType<EnemyController>().ToList().ConvertAll(item => item.gameObject).ToArray();
         enemyPositions = new Vector3[enemies.Length];
         enemyVelocities = new Vector2[enemies.Length];
@@ -242,22 +249,23 @@ public class PlayerAgent : Agent {
             enemyPositions[i] = enemies[i].transform.position + Vector3.zero;
             enemyVelocities[i] = enemies[i].GetComponent<EnemyController>().control.velocity + Vector2.zero;
         }
-        // var tokens_source = FindObjectOfType<TokenController>().tokens;
-        // tokens = new TokenInstance[tokensSource.Length];
-        // for (int i = 0; i < tokensSource.Length; i ++) {
-        //     tokens[i] = tokensSource[i];
-        // }
-        // tokens = FindObjectsOfType<TokenInstance>();
+
+        // Initialize tokens
         tokenController = Game.GetComponent<TokenController>();
         tokens = new TokenInstance[tokenController.tokens.Length];
         for (int i = 0; i < tokens.Length; i++) {
             tokens[i] = tokenController.tokens[i];
         }
-        float weightToken = 1.0f * tokens.Length / (tokens.Length + enemies.Length);
-        float weightEnemy = 1.0f - weightToken;
-        rewardTokenCollect = RewardGetToken * weightToken / tokens.Length;
-        rewardEnemyKill = RewardKillEnemy * weightEnemy / enemies.Length;
-        // contacts = new List<ContactPoint2D>();
+
+        // Initialize reward-related facilities
+        weightToken = 1.0f * tokens.Length / (tokens.Length + enemies.Length);
+        weightEnemy = 1.0f - weightToken;
+
+        targetX = FindFirstObjectByType<VictoryZone>().transform.position.x;
+        float power = Mathf.Pow(10, Mathf.Round(Mathf.Log10(targetX) - 1.0f));
+        targetX = Mathf.Round(targetX / power) * power;
+
+        // Initialize collision facilities
         contacts = new ContactPoint2D[8];
         filterContacts = new ContactFilter2D();
         filterContacts.SetLayerMask(LayerMask.GetMask("Level"));
@@ -265,23 +273,8 @@ public class PlayerAgent : Agent {
         // filterContacts.useOutsideNormalAngle = true;
         // filterContacts.SetDepth(0.95f, 1.05f);
         body = model.player.GetComponent<Rigidbody2D>();
-        penaltyStepPositional = (MaxStep > 0) ? -PenaltyMaxStep / MaxStep : 0;
-        // penaltyEpisode = 0.0f;
-        // rewardEpisode = 0.0f;
 
-        targetX = FindFirstObjectByType<VictoryZone>().transform.position.x;
-        float power = Mathf.Pow(10, Mathf.Round(Mathf.Log10(targetX) - 1.0f));
-        targetX = Mathf.Round(targetX / power) * power;
-
-        if (DebugLevel > 1) {
-            Debug.Log($"Spawn index = {curriculumSpawnIndex}");
-            Debug.Log($"Working directory = {Directory.GetCurrentDirectory()}");
-            Debug.Log($"Num tokens = {tokens.Length}, num enemies = {enemies.Length}");
-            Debug.Log($"Token weight = {weightToken}");
-            Debug.Log($"Enemy weight = {weightEnemy}");
-            Debug.Log($"Victory zone target = {targetX}");
-        }
-
+        // Callbacks
         PlayerEnteredVictoryZone.OnExecute += PlayerEnteredVictoryZone_OnExecute;
         void PlayerEnteredVictoryZone_OnExecute(PlayerEnteredVictoryZone ev) {
             if (!facedWin) {
@@ -294,21 +287,6 @@ public class PlayerAgent : Agent {
                     Debug.Log($"Reward win = {rewardWin}, spawn depth = {spawnDepth}, spawn index = {spawnIndex}");
                 // Game completed successfully
                 endReason = Reason.WON;
-                // Respawn at one of the spawn points
-                if (CurriculumEnabled) {
-                    // Increase available spawn points if the agent is doing well
-                    curriculumWinCount ++;
-                    if (curriculumWinCount >= CurriculumWins) {
-                        curriculumWinCount = 0;
-                        curriculumFailCount = 0;  // asymmetrically reset fail count (failures do not reset wins)
-                        curriculumSpawnIndex --;
-                        curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
-                        spawnIndex = curriculumSpawnIndex;
-                    }
-                    // model.spawnPoint = curriculumSpawnPoints[
-                    //     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
-                    // ].transform;
-                }
                 StopEpisode(rewardWin);
                 // --> EndEpisode
                 Schedule<PlayerSpawn>(2);
@@ -429,6 +407,39 @@ public class PlayerAgent : Agent {
             episodeActive = true;
             numCollisions = 0;
         }
+
+        // Initialize Player
+        if (CurriculumEnabled) {
+            spawnIndex = curriculumSpawnIndex;
+        } else {
+            spawnIndex = SpawnPoint;
+        }
+        model.spawnPoint = spawnPoints[
+            spawnIndex
+        ].transform;
+        model.player.Teleport(model.spawnPoint.transform.position);
+    }
+
+    internal void InitializeEpisode() {
+        rewardTokenCollect = RewardGetToken * weightToken / tokens.Length;
+        rewardEnemyKill = RewardKillEnemy * weightEnemy / enemies.Length;
+        penaltyStepPositional = (MaxStep > 0) ? -PenaltyMaxStep / MaxStep : 0;
+        // penaltyEpisode = 0.0f;
+        // rewardEpisode = 0.0f;
+    }
+
+    void Start() {
+        InitializeEnvironment();
+        InitializeEpisode();
+
+        if (DebugLevel > 1) {
+            Debug.Log($"Spawn index = {curriculumSpawnIndex}");
+            Debug.Log($"Working directory = {Directory.GetCurrentDirectory()}");
+            Debug.Log($"Num tokens = {tokens.Length}, num enemies = {enemies.Length}");
+            Debug.Log($"Token weight = {weightToken}");
+            Debug.Log($"Enemy weight = {weightEnemy}");
+            Debug.Log($"Victory zone target = {targetX}");
+        }
     }
 
     private float GetPositionalCoefficient() {
@@ -506,9 +517,6 @@ public class PlayerAgent : Agent {
     public override void OnEpisodeBegin() {
         // Episode begins and ends where the player is at the moment,
         // after the begining of the episode, player is to be teleported to a spawn point
-        // base.OnEpisodeBegin();
-        // Reset variables as at the beginning of an episode (number of collisions are reset after)
-        // numCollisions = 0.0f;  // goes after respawn
         if (DebugLevel > 1)
             Debug.Log($"Stop episode: episodes played = {CompletedEpisodes}");
         if (DebugLevel > 0) {
@@ -527,7 +535,11 @@ public class PlayerAgent : Agent {
             }
             Debug.Log(report);
         }
+        InitializeEpisode();
+        // Reset variables as at the beginning of an episode (number of collisions are reset after)
+        // numCollisions = 0.0f;  // goes after respawn
         // SaveConfig();
+        // Respawn at one of the spawn points
         if (CurriculumEnabled) {
             if (endReason != Reason.WON) {
                 // Decrease available spawn points if the agent doing bad
@@ -537,8 +549,23 @@ public class PlayerAgent : Agent {
                     curriculumSpawnIndex ++;
                     curriculumSpawnIndex = Math.Min(curriculumSpawnIndex, spawnDepth - 1);
                 }
+            } else {
+                // Increase available spawn points if the agent is doing well
+                curriculumWinCount ++;
+                if (curriculumWinCount >= CurriculumWins) {
+                    curriculumWinCount = 0;
+                    curriculumFailCount = 0;  // asymmetrically reset fail count (failures do not reset wins)
+                    curriculumSpawnIndex --;
+                    curriculumSpawnIndex = Math.Max(0, curriculumSpawnIndex);
+                    spawnIndex = curriculumSpawnIndex;
+                }
+                // model.spawnPoint = curriculumSpawnPoints[
+                //     random.Next(curriculumSpawnIndex, curriculumSpawnDepth)
+                // ].transform;
             }
             spawnIndex = curriculumSpawnIndex;
+        } else {
+            spawnIndex = SpawnPoint;
         }
         switch (SpawnSampling) {
             case Sampling.None: {
@@ -549,7 +576,7 @@ public class PlayerAgent : Agent {
             }
             case Sampling.Uniform: {
                 model.spawnPoint = spawnPoints[
-                    random.Next(spawnIndex, spawnDepth)
+                    random.Next(CurriculumEnabled ? spawnIndex : 0, spawnDepth)
                 ].transform;
                 break;
             }
